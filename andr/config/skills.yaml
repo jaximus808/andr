@@ -1,0 +1,13 @@
+skills:
+  - id: "GOTO_NEARBY"
+    description: "Navigates to the nearest point of interest by the robot"
+    cooldown: 20
+  - id: "MEOW"
+    description: "Meows"
+    cooldown: 5
+  - id: "Look Around"
+    description: "Does a look around animation and can scan for new points of interest"
+    cooldown: 5
+  - id: "Goon"
+    description: "Starts GOONING"
+    cooldown: 5

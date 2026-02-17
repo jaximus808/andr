@@ -1,0 +1,14 @@
+<root BTCPP_format="4">
+    <BehaviorTree ID="MainTree">
+        <Fallback name="RobotLogic">
+            
+            <Sequence name="TaskSequence">
+                <CheckBlackboard name="Is Task Available?"/>
+                <ExecuteTask name="Perform The Task"/>
+            </Sequence>
+
+            <IdleWander name="Wander Around"/>
+            
+        </Fallback>
+    </BehaviorTree>
+</root>

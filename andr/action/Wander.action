@@ -1,0 +1,8 @@
+int32 target_id
+string task_name
+---
+bool success
+string message
+---
+float32 progress_percentage
+string current_state
