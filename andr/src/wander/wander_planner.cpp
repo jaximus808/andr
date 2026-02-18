@@ -15,7 +15,7 @@ void WanderPlanner::load_skills() {
         WanderPlanner::SkillState skill;
         skill.id = node["id"].as<std::string>();
         skill.description = node["description"].as<std::string>();
-        skill.default_params = node["default_params"].as<std::string>();
+        skill.default_params = "test";///node["default_params"].as<std::string>();
         //skill.last_execution_time = rclcpp::Time(0); // Never run
         
         available_skills_.push_back(skill);

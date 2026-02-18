@@ -5,10 +5,12 @@
 int main(int argc, char **argv) {
     rclcpp::init(argc, argv);
     auto node_brain = std::make_shared<RobotBrain>();
+    
+    node_brain->init(); 
 
     auto node_wander = std::make_shared<WanderActionServer>();
 
-    rclcpp::executors::SingleThreadedExecutor executor;
+    rclcpp::executors::MultiThreadedExecutor executor;
     
     executor.add_node(node_brain);
     executor.add_node(node_wander);

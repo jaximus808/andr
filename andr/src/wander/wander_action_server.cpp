@@ -15,7 +15,7 @@ WanderActionServer::WanderActionServer(const rclcpp::NodeOptions & options)
 
     this->action_server_ = rclcpp_action::create_server<Wander>(
     this,
-    "wander",
+    "wander_planner",
     std::bind(&WanderActionServer::handle_goal, this, _1, _2),
     std::bind(&WanderActionServer::handle_cancel, this, _1),
     std::bind(&WanderActionServer::handle_accepted, this, _1));

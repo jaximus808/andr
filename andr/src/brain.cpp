@@ -27,10 +27,19 @@ RobotBrain::RobotBrain() : Node("robot_brain") {
     );
 //    
 //    // C. SETUP BEHAVIOR TREE FACTORY
+        // start with the timer cancelled
+}
+
+void RobotBrain::init() {
+    auto node_ptr = shared_from_this();
     BT::BehaviorTreeFactory factory;
     factory.registerNodeType<TaskCheck>("CheckBlackboard");
     factory.registerNodeType<TaskMode>("ExecuteTask");
-    factory.registerNodeType<Wander>("IdleWander");
+    factory.registerBuilder<Wander>(
+    "IdleWander",
+    [node_ptr](const std::string& name, const BT::NodeConfiguration& config) {
+      return std::make_unique<Wander>(name, config, node_ptr);
+    });
 
 //    // D. CREATE THE TREE
     // Important: We pass the blackboard to the tree here!
@@ -41,7 +50,6 @@ RobotBrain::RobotBrain() : Node("robot_brain") {
     timer_ = this->create_wall_timer(rate, 
                                    std::bind(&RobotBrain::timer_callback, this));
 
-        // start with the timer cancelled
 }
 
 void RobotBrain::run() {
@@ -53,9 +61,3 @@ void RobotBrain::timer_callback() {
     tree_.tickRoot();
     return;
 }
-
-
-
-
-
-

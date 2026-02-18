@@ -17,6 +17,8 @@ public:
     // Constructor declaration
     RobotBrain();
 
+    void init();
+
     void tick();
 
     void run();
