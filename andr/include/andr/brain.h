@@ -3,6 +3,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include "behaviortree_cpp_v3/bt_factory.h"
 
 #include "andr/task.h"

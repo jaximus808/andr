@@ -16,10 +16,20 @@ find_package(std_msgs REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(rclcpp_action REQUIRED) 
 find_package(rosidl_default_generators REQUIRED) 
+find_package(builtin_interfaces REQUIRED)
 find_package(yaml-cpp REQUIRED)
-# 2. GENERATE ACTION INTERFACES
+find_package(builtin_interfaces REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+
+# 2. GENERATE ACTION + MESSAGE INTERFACES
 rosidl_generate_interfaces(${PROJECT_NAME}
+    "msg/Prompt.msg"
+    "msg/RobotSpeech.msg"
     "action/Wander.action"
+    "action/Agent.action"
+    "action/ExecuteSkill.action"
+    "action/TaskGoal.action"
+    DEPENDENCIES builtin_interfaces
 )
 
 # 3. CREATE LIBRARY (The Brain)
@@ -34,7 +44,8 @@ ament_target_dependencies(bt_nodes_lib
   rclcpp
   std_msgs
   behaviortree_cpp_v3
-  rclcpp_action # Add this if brain.cpp uses actions
+  rclcpp_action
+  ament_index_cpp
 )
 
 rosidl_get_typesupport_target(cpp_types "${PROJECT_NAME}" "rosidl_typesupport_cpp")
@@ -83,10 +94,15 @@ install(FILES
 
 install(FILES
   config/skills.yaml
+  config/skill_executor_config.yaml
   DESTINATION share/${PROJECT_NAME}
 )
 install(DIRECTORY include/
   DESTINATION include
+)
+
+install(DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}/launch
 )
 
 ament_package()

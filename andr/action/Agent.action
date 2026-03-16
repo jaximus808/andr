@@ -1,0 +1,13 @@
+# GOAL — what the caller sends to the agent
+string prompt          # The natural-language prompt / instruction
+string context         # Optional runtime context injected by the caller (robot state, etc.)
+---
+# RESULT — the agent ran its full loop to completion
+bool   success         # True = task completed.  False = agent failed or was cancelled.
+string summary         # Final human-readable sentence describing what happened / why it failed.
+---
+# FEEDBACK — one message per loop iteration so the caller can observe reasoning
+uint32  iteration      # Which loop cycle this feedback is from (1-based)
+string  state          # Current agent state: thinking | execute_skill | query_rag | await_condition | done | failed
+string  status         # Human-readable description of what is happening this iteration
+float32 progress       # 0.0–1.0 rough progress estimate

@@ -3,6 +3,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "andr/action/wander.hpp"
+#include <atomic>
 #include <behaviortree_cpp_v3/action_node.h>
 
 class Wander : public BT::StatefulActionNode {
@@ -23,6 +24,9 @@ public:
 
 private:
     bool madeWanderTask;
+    std::atomic<bool> goal_accepted_{false};
+    std::atomic<bool> task_finished_{false};
+    std::atomic<bool> task_succeeded_{false};
     rclcpp::Node::SharedPtr node_;
     rclcpp_action::Client<WanderAction>::SharedPtr wander_client_;
 

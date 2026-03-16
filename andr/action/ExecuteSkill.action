@@ -1,0 +1,14 @@
+# GOAL — sent by the agent to the skill executor node
+string skill_name   # Snake-case name of the skill to invoke (e.g. "navigate_to")
+string params_json  # JSON-encoded parameter dict  (e.g. '{"destination":"kitchen"}')
+                    # Pass '{}' when the skill takes no parameters.
+---
+# RESULT — returned when the skill finishes (success or failure)
+bool   success        # True if the skill completed without error
+string result_json    # JSON-encoded output from the skill
+                      # Shape is skill-defined; at minimum '{"status":"ok"}'
+string error_message  # Human-readable error description — empty on success
+---
+# FEEDBACK — optional progress from long-running skills
+string  status    # Human-readable status  (e.g. "Moving… 30 %")
+float32 progress  # 0.0–1.0 progress estimate

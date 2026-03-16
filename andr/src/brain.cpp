@@ -11,6 +11,7 @@ RobotBrain::RobotBrain() : Node("robot_brain") {
         param_desc.description = "Rate in Hz to run behavior tree at";
 
         this->declare_parameter("rate_hz", float_t(30), param_desc);
+        this->declare_parameter("enable_wander", true);
     blackboard_ = BT::Blackboard::create();
     blackboard_->set<bool>("has_task", false); // Default: No task
 
@@ -31,6 +32,11 @@ RobotBrain::RobotBrain() : Node("robot_brain") {
 }
 
 void RobotBrain::init() {
+    if (!this->get_parameter("enable_wander").as_bool()) {
+        RCLCPP_INFO(this->get_logger(), "Behavior tree disabled (enable_wander=false)");
+        return;
+    }
+
     auto node_ptr = shared_from_this();
     BT::BehaviorTreeFactory factory;
     factory.registerNodeType<TaskCheck>("CheckBlackboard");
@@ -43,12 +49,16 @@ void RobotBrain::init() {
 
 //    // D. CREATE THE TREE
     // Important: We pass the blackboard to the tree here!
-    tree_ = factory.createTreeFromFile("./config/behavior_tree.xml", blackboard_);
+    // Resolve behavior_tree.xml from the installed share directory
+    std::string bt_path = ament_index_cpp::get_package_share_directory("andr") + "/behavior_tree.xml";
+    tree_ = factory.createTreeFromFile(bt_path, blackboard_);
 
 
     std::chrono::milliseconds rate(int32_t(1000.0 / this->get_parameter("rate_hz").as_double()));
-    timer_ = this->create_wall_timer(rate, 
+    timer_ = this->create_wall_timer(rate,
                                    std::bind(&RobotBrain::timer_callback, this));
+    RCLCPP_INFO(this->get_logger(), "Behavior tree enabled, ticking at %.1f Hz",
+                this->get_parameter("rate_hz").as_double());
 
 }
 

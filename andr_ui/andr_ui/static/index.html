@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ANDR — Robot UI</title>
+  <style>
+    /* ── Reset / base ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0d0d0d;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 12px 20px;
+      background: #161616;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.05em; }
+
+    #status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #555;
+      flex-shrink: 0;
+    }
+    #status-dot.connected  { background: #4caf50; }
+    #status-dot.error      { background: #f44336; }
+
+    /* ── Main layout ────────────────────────────────────────────────── */
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      gap: 1px;
+      background: #2a2a2a;
+    }
+
+    /* ── Panels ─────────────────────────────────────────────────────── */
+    .panel {
+      display: flex;
+      flex-direction: column;
+      background: #111;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 8px 14px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      background: #161616;
+      border-bottom: 1px solid #222;
+      flex-shrink: 0;
+    }
+
+    /* Left: event log */
+    #panel-log   { flex: 1; }
+    /* Center: chat */
+    #panel-chat  { flex: 1; }
+    /* Right: status */
+    #panel-status { flex: 0.6; min-width: 220px; }
+
+    /* ── Log list ───────────────────────────────────────────────────── */
+    #log-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .log-entry {
+      font-size: 0.8rem;
+      font-family: 'Consolas', 'Fira Code', monospace;
+      padding: 4px 8px;
+      border-radius: 4px;
+      border-left: 3px solid #333;
+      background: #181818;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-entry.connected      { border-color: #4caf50; color: #81c784; }
+    .log-entry.user_prompt    { border-color: #42a5f5; color: #90caf9; }
+    .log-entry.robot_speech   { border-color: #ab47bc; color: #ce93d8; }
+    .log-entry.agent_feedback { border-color: #ffa726; color: #ffcc80; }
+    .log-entry.task_feedback  { border-color: #ffa726; color: #ffcc80; }
+    .log-entry.task_result    { border-color: #66bb6a; color: #a5d6a7; }
+    .log-entry.task_result.failed { border-color: #ef5350; color: #ef9a9a; }
+    .log-entry.robot_status   { border-color: #26a69a; color: #80cbc4; }
+    .log-entry.error          { border-color: #ef5350; color: #ef9a9a; }
+
+    .log-ts { color: #555; margin-right: 6px; user-select: none; }
+
+    /* ── Chat panel ─────────────────────────────────────────────────── */
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .bubble {
+      max-width: 85%;
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 0.875rem;
+      line-height: 1.4;
+    }
+    .bubble.user  {
+      align-self: flex-end;
+      background: #1a3a5c;
+      color: #c9e4ff;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.robot {
+      align-self: flex-start;
+      background: #2a1a3a;
+      color: #e1c4f5;
+      border-bottom-left-radius: 4px;
+    }
+    .bubble .emotion {
+      font-size: 0.7rem;
+      color: #888;
+      margin-top: 4px;
+    }
+
+    /* ── Progress bar ──────────────────────────────────────────────── */
+    #task-progress {
+      padding: 0 14px 6px;
+      flex-shrink: 0;
+      display: none;
+    }
+    #task-progress.active { display: block; }
+
+    #task-progress .bar-bg {
+      height: 4px;
+      background: #222;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #task-progress .bar-fill {
+      height: 100%;
+      background: #42a5f5;
+      width: 0%;
+      transition: width 0.3s;
+      border-radius: 2px;
+    }
+    #task-progress .bar-label {
+      font-size: 0.7rem;
+      color: #888;
+      margin-top: 2px;
+    }
+
+    /* ── Prompt input ───────────────────────────────────────────────── */
+    #input-area {
+      padding: 10px 14px;
+      border-top: 1px solid #222;
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    #prompt-input {
+      flex: 1;
+      background: #1c1c1c;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #e0e0e0;
+      padding: 8px 12px;
+      font-size: 0.875rem;
+      resize: none;
+      outline: none;
+      height: 60px;
+      font-family: inherit;
+    }
+    #prompt-input:focus { border-color: #42a5f5; }
+
+    #send-btn {
+      background: #1565c0;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 0 18px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+    #send-btn:hover  { background: #1976d2; }
+    #send-btn:active { background: #0d47a1; }
+
+    /* ── Status panel ──────────────────────────────────────────────── */
+    #status-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 14px;
+    }
+
+    .status-section {
+      margin-bottom: 14px;
+    }
+    .status-section h3 {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #666;
+      margin-bottom: 6px;
+    }
+
+    .node-item, .action-item {
+      font-size: 0.78rem;
+      font-family: 'Consolas', 'Fira Code', monospace;
+      padding: 3px 6px;
+      margin-bottom: 2px;
+      border-radius: 3px;
+      background: #181818;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .node-item .dot, .action-item .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #4caf50;
+      flex-shrink: 0;
+    }
+    .action-item .dot { background: #42a5f5; }
+
+    .status-empty {
+      font-size: 0.75rem;
+      color: #555;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div id="status-dot"></div>
+  <h1>ANDR — Robot Dashboard</h1>
+  <span id="status-label" style="font-size:0.8rem; color:#666;">disconnected</span>
+</header>
+
+<div class="layout">
+
+  <!-- ── Left: event log ─────────────────────────────────────────── -->
+  <div class="panel" id="panel-log">
+    <div class="panel-header">Event Log</div>
+    <div id="log-list"></div>
+  </div>
+
+  <!-- ── Center: chat + input ────────────────────────────────────── -->
+  <div class="panel" id="panel-chat">
+    <div class="panel-header">Chat</div>
+    <div id="chat-messages"></div>
+
+    <div id="task-progress">
+      <div class="bar-bg"><div class="bar-fill" id="progress-fill"></div></div>
+      <div class="bar-label" id="progress-label"></div>
+    </div>
+
+    <div id="input-area">
+      <textarea
+        id="prompt-input"
+        placeholder="Give the robot a task..."
+        autocomplete="off"
+        spellcheck="false"
+      ></textarea>
+      <button id="send-btn">Send</button>
+    </div>
+  </div>
+
+  <!-- ── Right: node / action status ─────────────────────────────── -->
+  <div class="panel" id="panel-status">
+    <div class="panel-header">System Status</div>
+    <div id="status-content">
+      <div class="status-section">
+        <h3>Nodes</h3>
+        <div id="node-list"><span class="status-empty">Discovering...</span></div>
+      </div>
+      <div class="status-section">
+        <h3>Action Servers</h3>
+        <div id="action-list"><span class="status-empty">Discovering...</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ── Helpers ────────────────────────────────────────────────────────
+  const logList       = document.getElementById('log-list');
+  const chatPanel     = document.getElementById('chat-messages');
+  const input         = document.getElementById('prompt-input');
+  const sendBtn       = document.getElementById('send-btn');
+  const statusDot     = document.getElementById('status-dot');
+  const statusLbl     = document.getElementById('status-label');
+  const progressWrap  = document.getElementById('task-progress');
+  const progressFill  = document.getElementById('progress-fill');
+  const progressLabel = document.getElementById('progress-label');
+  const nodeList      = document.getElementById('node-list');
+  const actionList    = document.getElementById('action-list');
+
+  const MAX_LOG_ENTRIES = 200;
+
+  function ts() {
+    return new Date().toLocaleTimeString('en-US', {hour12: false});
+  }
+
+  function addLog(type, text, extraClass) {
+    const el = document.createElement('div');
+    el.className = `log-entry ${type}` + (extraClass ? ` ${extraClass}` : '');
+    el.innerHTML = `<span class="log-ts">${ts()}</span>${escHtml(text)}`;
+    logList.appendChild(el);
+    while (logList.children.length > MAX_LOG_ENTRIES) {
+      logList.removeChild(logList.firstChild);
+    }
+    logList.scrollTop = logList.scrollHeight;
+  }
+
+  function addBubble(who, text, emotion) {
+    const el = document.createElement('div');
+    el.className = `bubble ${who}`;
+    el.textContent = text;
+    if (emotion) {
+      const em = document.createElement('div');
+      em.className = 'emotion';
+      em.textContent = emotion;
+      el.appendChild(em);
+    }
+    chatPanel.appendChild(el);
+    chatPanel.scrollTop = chatPanel.scrollHeight;
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function showProgress(pct, label) {
+    progressWrap.classList.add('active');
+    progressFill.style.width = Math.round(pct * 100) + '%';
+    progressLabel.textContent = label || '';
+  }
+
+  function hideProgress() {
+    progressWrap.classList.remove('active');
+    progressFill.style.width = '0%';
+    progressLabel.textContent = '';
+  }
+
+  // ── WebSocket ───────────────────────────────────────────────────────
+  let ws = null;
+  let reconnectDelay = 1000;
+
+  function connect() {
+    const url = `ws://${location.host}/ws`;
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      statusDot.className = 'connected';
+      statusLbl.textContent = 'connected';
+      reconnectDelay = 1000;
+      addLog('connected', 'WebSocket connected');
+    };
+
+    ws.onclose = () => {
+      statusDot.className = '';
+      statusLbl.textContent = 'reconnecting...';
+      addLog('error', `Disconnected - retrying in ${reconnectDelay / 1000}s`);
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 16000);
+    };
+
+    ws.onerror = () => {
+      statusDot.className = 'error';
+    };
+
+    ws.onmessage = (evt) => {
+      let msg;
+      try { msg = JSON.parse(evt.data); }
+      catch { addLog('error', 'Bad JSON: ' + evt.data); return; }
+      handleEvent(msg);
+    };
+  }
+
+  // ── Event routing ────────────────────────────────────────────────────
+  function handleEvent(msg) {
+    const type = msg.type || 'unknown';
+
+    switch (type) {
+      case 'connected':
+        addLog('connected', msg.text || 'Connected');
+        break;
+
+      case 'user_prompt':
+        addLog('user_prompt', '> You: ' + (msg.text || ''));
+        addBubble('user', msg.text || '');
+        showProgress(0.05, 'Sending task...');
+        break;
+
+      case 'robot_speech':
+        addLog('robot_speech', '[robot] ' + (msg.text || ''));
+        addBubble('robot', msg.text || '', msg.emotion || '');
+        break;
+
+      case 'agent_feedback': {
+        const state = msg.state || '';
+        const status = msg.status || msg.raw || JSON.stringify(msg);
+        addLog('agent_feedback', `[${state}] ${status}`);
+        break;
+      }
+
+      case 'task_feedback': {
+        const state = msg.state || '';
+        const status = msg.status || '';
+        const progress = msg.progress || 0;
+        addLog('task_feedback', `[${state}] ${status}`);
+        showProgress(progress, `${state}: ${status}`);
+        break;
+      }
+
+      case 'task_result': {
+        const ok = msg.success;
+        const summary = msg.summary || '';
+        addLog('task_result', (ok ? 'OK: ' : 'FAIL: ') + summary, ok ? '' : 'failed');
+        hideProgress();
+        break;
+      }
+
+      case 'robot_status':
+        addLog('robot_status', msg.text || '');
+        break;
+
+      case 'node_status':
+        renderNodeStatus(msg.nodes || [], msg.action_servers || []);
+        break;
+
+      case 'error':
+        addLog('error', msg.text || 'Error');
+        hideProgress();
+        break;
+
+      default:
+        addLog('robot_status', `[${type}] ` + JSON.stringify(msg));
+    }
+  }
+
+  // ── Node / action status panel ──────────────────────────────────────
+  function renderNodeStatus(nodes, actions) {
+    // Nodes
+    if (nodes.length === 0) {
+      nodeList.innerHTML = '<span class="status-empty">No nodes found</span>';
+    } else {
+      nodeList.innerHTML = '';
+      for (const n of nodes) {
+        const el = document.createElement('div');
+        el.className = 'node-item';
+        const label = n.namespace === '/' ? n.name : `${n.namespace}/${n.name}`;
+        el.innerHTML = `<span class="dot"></span>${escHtml(label)}`;
+        nodeList.appendChild(el);
+      }
+    }
+
+    // Action servers
+    if (actions.length === 0) {
+      actionList.innerHTML = '<span class="status-empty">No action servers found</span>';
+    } else {
+      actionList.innerHTML = '';
+      for (const a of actions) {
+        const el = document.createElement('div');
+        el.className = 'action-item';
+        el.innerHTML = `<span class="dot"></span>${escHtml(a)}`;
+        actionList.appendChild(el);
+      }
+    }
+  }
+
+  // ── Send prompt ──────────────────────────────────────────────────────
+  function sendPrompt() {
+    const text = input.value.trim();
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'prompt', text }));
+    input.value = '';
+    input.focus();
+  }
+
+  sendBtn.addEventListener('click', sendPrompt);
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      sendPrompt();
+    }
+  });
+
+  // ── Boot ─────────────────────────────────────────────────────────────
+  connect();
+</script>
+</body>
+</html>

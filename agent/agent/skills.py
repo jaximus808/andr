@@ -1,0 +1,297 @@
+"""skills.py — Skills registry and ROS 2 action-client executor for ANDR."""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+
+import rclpy
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SkillParameter:
+    name: str
+    type: str = "string"
+    required: bool = True
+    description: str = ""
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "SkillParameter":
+        return cls(
+            name=d.get("name", ""),
+            type=d.get("type", "string"),
+            required=bool(d.get("required", True)),
+            description=d.get("description", ""),
+        )
+
+
+@dataclass
+class Skill:
+    name: str
+    description: str
+    parameters: list[SkillParameter] = field(default_factory=list)
+    returns: str = "void"
+    category: str = "general"
+    tags: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Skill":
+        return cls(
+            name=d.get("name", ""),
+            description=d.get("description", "").strip(),
+            parameters=[
+                SkillParameter.from_dict(p) for p in d.get("parameters", [])
+            ],
+            returns=d.get("returns", "void"),
+            category=d.get("category", "general"),
+            tags=d.get("tags", []),
+        )
+
+    def to_prompt_line(self) -> str:
+        """One-line summary suitable for embedding in an LLM prompt."""
+        params = ", ".join(
+            f"{p.name}: {p.type}{'*' if p.required else '?'}"
+            for p in self.parameters
+        )
+        return (
+            f"  {self.name}({params}) -> {self.returns}\n"
+            f"    {self.description}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+class SkillsRegistry:
+    """Holds available robot skills and formats them for LLM injection."""
+
+    def __init__(self, skills: Optional[list[Skill]] = None):
+        self._skills: dict[str, Skill] = {}
+        for skill in (skills or []):
+            self._skills[skill.name] = skill
+
+    # ------------------------------------------------------------------
+    # Construction helpers
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "SkillsRegistry":
+        """Load a registry from a YAML file."""
+        try:
+            import yaml  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "PyYAML is required to load skills.  Install with: pip install pyyaml"
+            ) from exc
+
+        path = Path(path)
+        if not path.exists():
+            logger.warning("Skills YAML not found at '%s'; using empty registry.", path)
+            return cls()
+
+        with path.open() as fh:
+            data: dict = yaml.safe_load(fh) or {}
+
+        raw_skills: list[dict] = data.get("skills", [])
+        skills = [Skill.from_dict(s) for s in raw_skills if isinstance(s, dict)]
+        logger.info("Loaded %d skill(s) from '%s'.", len(skills), path)
+        return cls(skills)
+
+    @classmethod
+    def from_dict_list(cls, raw: list[dict]) -> "SkillsRegistry":
+        """Build a registry directly from a list of dicts (useful in tests)."""
+        return cls([Skill.from_dict(d) for d in raw])
+
+    # ------------------------------------------------------------------
+    # Lookups
+    # ------------------------------------------------------------------
+
+    def get(self, name: str) -> Optional[Skill]:
+        return self._skills.get(name)
+
+    def all_skills(self) -> list[Skill]:
+        return list(self._skills.values())
+
+    def by_category(self, category: str) -> list[Skill]:
+        return [s for s in self._skills.values() if s.category == category]
+
+    def names(self) -> list[str]:
+        return list(self._skills.keys())
+
+    def __len__(self) -> int:
+        return len(self._skills)
+
+    # ------------------------------------------------------------------
+    # Prompt formatting
+    # ------------------------------------------------------------------
+
+    def to_prompt_block(self, category: Optional[str] = None) -> str:
+        """Format all (or category-filtered) skills as a text block for LLM injection."""
+        skills = (
+            self.by_category(category) if category else self.all_skills()
+        )
+        if not skills:
+            return "AVAILABLE SKILLS\n================\n(none)"
+
+        lines = ["AVAILABLE SKILLS", "================"]
+        for skill in skills:
+            lines.append(skill.to_prompt_line())
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Skill Executor — sends goals to the /skill_executor action server
+# ---------------------------------------------------------------------------
+
+class SkillExecutor:
+    """
+    Dispatches skill calls to the ``/skill_executor`` ROS 2 node via ExecuteSkill actions.
+
+    Falls back to mock results if the action client cannot be created or the node
+    is not running.
+
+    Parameters
+    ----------
+    registry:
+        Loaded SkillsRegistry used for pre-call validation.
+    node:
+        rclpy.node.Node that owns this executor (action client is attached to it).
+    action_server_name:
+        ROS 2 action name of the skill_executor node. Default: /skill_executor
+    timeout_s:
+        Server availability timeout and per-call timeout in seconds.
+    """
+
+    ACTION_NAME = "/skill_executor"
+
+    def __init__(
+        self,
+        registry: SkillsRegistry,
+        node,                          # rclpy.node.Node — avoids circular import
+        action_server_name: str = "/skill_executor",
+        timeout_s: float = 30.0,
+    ):
+        self._registry    = registry
+        self._node        = node
+        self._timeout_s   = timeout_s
+        self._action_name = action_server_name
+
+        # Lazy import so the module is importable without a live ROS context
+        # (e.g. unit tests that only use SkillsRegistry).
+        try:
+            from rclpy.action import ActionClient          # noqa: PLC0415
+            from andr.action import ExecuteSkill           # noqa: PLC0415
+            self._ActionClient  = ActionClient
+            self._ExecuteSkill  = ExecuteSkill
+            self._action_client = ActionClient(node, ExecuteSkill, action_server_name)
+            logger.info(
+                "SkillExecutor: action client created for '%s'.", action_server_name
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "SkillExecutor: could not create action client (%s). "
+                "All skill calls will return mock results.",
+                exc,
+            )
+            self._action_client = None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def execute(self, skill_name: str, args: Optional[dict] = None) -> str:
+        """
+        Send an ExecuteSkill goal and block until a result is returned.
+        Returns a string injected into the LLM conversation; errors start with 'ERROR:'.
+        """
+        args = args or {}
+
+        # --- Registry validation ---
+        skill = self._registry.get(skill_name)
+        if skill is None:
+            err = (
+                f"Skill '{skill_name}' is not in the registry. "
+                f"Available: {self._registry.names()}"
+            )
+            logger.warning("SkillExecutor: %s", err)
+            return f"ERROR: {err}"
+
+        missing = [
+            p.name for p in skill.parameters
+            if p.required and p.name not in args
+        ]
+        if missing:
+            err = f"Skill '{skill_name}' is missing required args: {missing}"
+            logger.warning("SkillExecutor: %s", err)
+            return f"ERROR: {err}"
+
+        # --- Action client unavailable → mock ---
+        if self._action_client is None:
+            return self._mock_result(skill_name, args)
+
+        # --- Send goal to skill_executor node ---
+        return self._send_goal(skill_name, args)
+
+    def _send_goal(self, skill_name: str, args: dict) -> str:
+        """Block until the skill_executor node returns a result."""
+        import json as _json
+
+        if not self._action_client.wait_for_server(timeout_sec=self._timeout_s):
+            err = f"skill_executor '{self._action_name}' not available after {self._timeout_s}s."
+            logger.error("SkillExecutor: %s", err)
+            return f"ERROR: {err}"
+
+        goal_msg = self._ExecuteSkill.Goal()
+        goal_msg.skill_name  = skill_name
+        goal_msg.params_json = _json.dumps(args)
+        logger.info("SkillExecutor: sending skill='%s' params=%s", skill_name, goal_msg.params_json)
+
+        send_future = self._action_client.send_goal_async(goal_msg)
+        rclpy.spin_until_future_complete(self._node, send_future, timeout_sec=self._timeout_s)
+
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            err = f"Skill goal '{skill_name}' was rejected by skill_executor."
+            logger.error("SkillExecutor: %s", err)
+            return f"ERROR: {err}"
+
+        # Wait for the result
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(
+            self._node, result_future, timeout_sec=self._timeout_s
+        )
+
+        wrapped = result_future.result()
+        if wrapped is None:
+            err = f"Skill '{skill_name}' timed out waiting for result."
+            logger.error("SkillExecutor: %s", err)
+            return f"ERROR: {err}"
+
+        res = wrapped.result
+        if not res.success:
+            err = f"Skill '{skill_name}' failed: {res.error_message}"
+            logger.warning("SkillExecutor: %s", err)
+            return f"ERROR: {err}"
+
+        logger.info(
+            "SkillExecutor: '%s' succeeded → %s", skill_name, res.result_json[:120]
+        )
+        return res.result_json
+
+    # ------------------------------------------------------------------
+    # Mock fallback
+    # ------------------------------------------------------------------
+
+    def _mock_result(self, skill_name: str, args: dict) -> str:
+        """Route to per-skill mock handler when skill_executor node is unavailable."""
+        from .mock_skills import dispatch  # noqa: PLC0415
+        return dispatch(skill_name, args)

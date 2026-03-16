@@ -4,6 +4,7 @@
 #include <memory>
 #include <thread>
 #include <queue>
+#include <atomic>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -35,7 +36,8 @@ private:
   // The actual "work" loop
     void execute(const std::shared_ptr<GoalHandleWander> goal_handle);
 
-    WanderPlanner wander_planner;  
+    WanderPlanner wander_planner;
+    std::atomic<bool> executing_{false};
 
 };
 

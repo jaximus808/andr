@@ -29,7 +29,10 @@ rclcpp_action::GoalResponse WanderActionServer::handle_goal(
 {
   RCLCPP_INFO(this->get_logger(), "Received goal request");
   (void)uuid;
-  // Logic: Reject if goal is invalid (e.g., negative duration)
+  if (executing_) {
+    RCLCPP_WARN(this->get_logger(), "Already executing a wander goal, rejecting.");
+    return rclcpp_action::GoalResponse::REJECT;
+  }
   return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
 }
 
@@ -50,6 +53,7 @@ void WanderActionServer::handle_accepted(const std::shared_ptr<GoalHandleWander>
 void WanderActionServer::execute(const std::shared_ptr<GoalHandleWander> goal_handle)
 {
     RCLCPP_INFO(this->get_logger(), "Executing wander...");
+    executing_ = true;
 
     const auto goal = goal_handle->get_goal();
     auto feedback = std::make_shared<Wander::Feedback>();
@@ -91,7 +95,7 @@ void WanderActionServer::execute(const std::shared_ptr<GoalHandleWander> goal_ha
             break;
         case StateExecute::SENT_EXECUTE_REQ:
             //Later this will wait for the task client to finish, but for now just be like meow
-            RCLCPP_INFO(this->get_logger(), "Executing Skill: %s", selected_skill.id );
+            RCLCPP_INFO(this->get_logger(), "Executing Skill: %s", selected_skill.id.c_str() );
             finished = true; 
             break;
     }
@@ -110,6 +114,7 @@ void WanderActionServer::execute(const std::shared_ptr<GoalHandleWander> goal_ha
     goal_handle->succeed(result);
     RCLCPP_INFO(this->get_logger(), "Wander completed successfully.");
     }
+    executing_ = false;
 }
 
 

@@ -1,0 +1,12 @@
+# GOAL — sent by the UI (via task_manager) to kick off a task
+string prompt          # Natural-language task description
+string context         # Optional runtime context (robot state, etc.)
+---
+# RESULT — returned when the agent finishes
+bool   success         # True = task completed, False = failed/cancelled
+string summary         # Final human-readable description of what happened
+---
+# FEEDBACK — streamed back so the UI can show progress
+string state           # Current phase: thinking | executing | done | failed
+string status          # Human-readable description of current step
+float32 progress       # 0.0–1.0 rough progress estimate
