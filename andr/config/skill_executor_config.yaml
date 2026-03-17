@@ -14,3 +14,7 @@ skills:
   walk:
     action_server: /skills/walk
     description: "Walk forward/backward for a duration"
+
+  spin:
+    action_server: /skills/spin
+    description: "Rotate the robot in place for a given duration"

@@ -116,13 +116,13 @@ class TaskManagerServer(Node):
         self.get_logger().info("Agent accepted goal — waiting for result…")
         self._send_task_feedback(goal_handle, "executing", "Agent is working…", 0.1)
 
-        # Wait for agent to finish
+        # Wait for agent to finish — no timeout, skills can run for a long time
         result_future = agent_goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future, timeout_sec=300.0)
+        rclpy.spin_until_future_complete(self, result_future)
 
         wrapped = result_future.result()
         if wrapped is None:
-            msg = "Agent timed out (300s)."
+            msg = "Agent returned no result."
             self.get_logger().error(msg)
             goal_handle.abort()
             result.success = False

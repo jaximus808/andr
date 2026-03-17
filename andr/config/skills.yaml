@@ -86,6 +86,34 @@ skills:
     category: communication
     tags: [tts, speech, audio]
 
+  # ── Spin ─────────────────────────────────────────────────────────────
+  - name: spin
+    description: >
+      Rotate the robot in place for a given duration. Useful for scanning the
+      surroundings, performing a celebratory twirl, or turning to face a new
+      direction. The robot spins at a configurable speed and stops automatically
+      when the duration elapses.
+    parameters:
+      - name: duration_s
+        type: float
+        required: true
+        description: >
+          How long to spin in seconds (e.g. 3.0 for a roughly full rotation
+          at default speed).
+      - name: speed_deg_s
+        type: float
+        required: false
+        description: Rotation speed in degrees per second. Default 90 (one full turn in ~4 s).
+      - name: direction
+        type: string
+        required: false
+        description: >
+          Spin direction: "left" (counter-clockwise) or "right" (clockwise).
+          Default "left".
+    returns: json
+    category: navigation
+    tags: [rotation, spin, cmd_vel]
+
   # ── Animation ─────────────────────────────────────────────────────────────
   - name: animate
     description: >

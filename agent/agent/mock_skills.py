@@ -251,6 +251,33 @@ def _handle_animate(args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# spin — rotate in place mock
+# ---------------------------------------------------------------------------
+
+def _handle_spin(args: dict) -> dict:
+    duration_s = float(args.get("duration_s", 3.0))
+    speed_deg_s = float(args.get("speed_deg_s", 90.0))
+    direction = args.get("direction", "left")
+
+    if direction not in ("left", "right"):
+        return {
+            "success": False,
+            "error_message": f"Invalid direction '{direction}'. Must be 'left' or 'right'.",
+        }
+
+    total_deg = speed_deg_s * duration_s
+    time.sleep(min(duration_s * 0.05, 0.5))  # compressed
+
+    return {
+        "success": True,
+        "direction": direction,
+        "duration_s": duration_s,
+        "total_rotation_deg": total_deg,
+        "note": "[MOCK] cmd_vel offline — spin simulated.",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Dispatch table + public entry point
 # ---------------------------------------------------------------------------
 
@@ -260,6 +287,7 @@ _HANDLERS: dict[str, Any] = {
     "move_sequence":     _handle_move_sequence,
     "speak":             _handle_speak,
     "animate":           _handle_animate,
+    "spin":              _handle_spin,
 }
 
 

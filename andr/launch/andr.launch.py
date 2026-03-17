@@ -214,6 +214,15 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(LaunchConfiguration("launch_skills")),
     )
 
+    spin_server_node = Node(
+        package="robot_skills",
+        executable="spin_server",
+        name="spin_server",
+        output="screen",
+        emulate_tty=True,
+        condition=IfCondition(LaunchConfiguration("launch_skills")),
+    )
+
     startup_msg = LogInfo(msg=[
         "\n",
         "======================================================\n",
@@ -233,5 +242,5 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         *args, startup_msg,
         brain_node, agent_node_action, task_manager_node, ui_process,
-        skill_executor_node, speak_server_node, walk_server_node,
+        skill_executor_node, speak_server_node, walk_server_node, spin_server_node,
     ])

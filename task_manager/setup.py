@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 package_name = 'task_manager'
 
 setup(
-    name=package_name,
+    name='task-manager',
     version='0.0.0',
     packages=find_packages(exclude=['test']),
     data_files=[

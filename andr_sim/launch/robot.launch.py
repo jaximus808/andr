@@ -49,6 +49,29 @@ def generate_launch_description():
         output="screen",
     )
 
+    # --- RViz ---
+    rviz_config = os.path.join(pkg_share, "config", "sim.rviz")
+
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        arguments=["-d", rviz_config],
+        parameters=[{"use_sim_time": True}],
+    )
+
+    # --- SLAM Toolbox (online async) ---
+    slam_params = os.path.join(pkg_share, "config", "slam_toolbox_params.yaml")
+
+    slam_toolbox = Node(
+        package="slam_toolbox",
+        executable="async_slam_toolbox_node",
+        name="slam_toolbox",
+        output="screen",
+        parameters=[slam_params, {"use_sim_time": True}],
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument(
             "use_sim_time", default_value="true",
@@ -56,11 +79,13 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "world",
-            default_value=os.path.join(pkg_share, "worlds", "empty.world"),
+            default_value=os.path.join(pkg_share, "worlds", "test_world.world"),
             description="Path to Gazebo world file",
         ),
 
         rsp,
         gazebo,
         spawn_entity,
+        slam_toolbox,
+        rviz,
     ])

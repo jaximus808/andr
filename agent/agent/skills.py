@@ -264,15 +264,13 @@ class SkillExecutor:
             logger.error("SkillExecutor: %s", err)
             return f"ERROR: {err}"
 
-        # Wait for the result
+        # Wait for the result — no timeout, skills can run for a long time
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(
-            self._node, result_future, timeout_sec=self._timeout_s
-        )
+        rclpy.spin_until_future_complete(self._node, result_future)
 
         wrapped = result_future.result()
         if wrapped is None:
-            err = f"Skill '{skill_name}' timed out waiting for result."
+            err = f"Skill '{skill_name}' returned no result."
             logger.error("SkillExecutor: %s", err)
             return f"ERROR: {err}"
 
