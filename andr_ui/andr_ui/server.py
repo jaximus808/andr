@@ -3,10 +3,14 @@ server.py — FastAPI web server for the ANDR web UI.
 
 Endpoints
 ---------
-  GET  /                  Serves index.html
+  GET  /                  Serves index.html (dashboard)
+  GET  /rviz              Serves rviz.html (2D map visualization)
   GET  /static/*          Static assets
   WS   /ws                WebSocket — bidirectional:
                             browser → server: {"type": "prompt", "text": "...", "context": "..."}
+                                              {"type": "save_point", "map_name": "...", "label": "...", "x": ..., "y": ...}
+                                              {"type": "get_points", "map_name": "..."}
+                                              {"type": "get_maps"}
                             server → browser: event dicts from ROS topics
 
 Run
@@ -105,6 +109,12 @@ async def index() -> HTMLResponse:
         return HTMLResponse(content=f.read())
 
 
+@app.get("/rviz", response_class=HTMLResponse)
+async def rviz() -> HTMLResponse:
+    with open(os.path.join(_STATIC_DIR, "rviz.html"), "r") as f:
+        return HTMLResponse(content=f.read())
+
+
 # ── WebSocket ────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
@@ -124,13 +134,34 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 await ws.send_text(json.dumps({"type": "error", "text": "Invalid JSON"}))
                 continue
 
-            if msg.get("type") == "prompt":
+            msg_type = msg.get("type")
+
+            if msg_type == "prompt":
                 text    = str(msg.get("text", "")).strip()
                 context = str(msg.get("context", ""))
                 if text and _bridge is not None:
                     _bridge.send_task(text, context)
                     # Echo back so the sender sees their own message in the log
                     await _broadcast({"type": "user_prompt", "text": text})
+
+            elif msg_type == "save_point":
+                if _bridge is not None:
+                    _bridge.save_point(
+                        map_name=str(msg.get("map_name", "")),
+                        label=str(msg.get("label", "")),
+                        x=float(msg.get("x", 0.0)),
+                        y=float(msg.get("y", 0.0)),
+                    )
+
+            elif msg_type == "get_points":
+                if _bridge is not None:
+                    _bridge.get_points(
+                        map_name=str(msg.get("map_name", "")),
+                    )
+
+            elif msg_type == "get_maps":
+                if _bridge is not None:
+                    _bridge.get_maps()
 
     except WebSocketDisconnect:
         _clients.discard(ws)
