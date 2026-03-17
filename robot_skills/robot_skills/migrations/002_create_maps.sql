@@ -1,5 +1,5 @@
 -- Maps table: one row per saved map, stores map metadata.
-CREATE TABLE maps (
+CREATE TABLE IF NOT EXISTS maps (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT UNIQUE NOT NULL,
     resolution REAL,
