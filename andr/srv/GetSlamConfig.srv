@@ -1,0 +1,5 @@
+---
+bool success
+string map_name
+bool localization
+string message

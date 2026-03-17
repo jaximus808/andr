@@ -11,6 +11,9 @@ Endpoints
                                               {"type": "save_point", "map_name": "...", "label": "...", "x": ..., "y": ...}
                                               {"type": "get_points", "map_name": "..."}
                                               {"type": "get_maps"}
+                                              {"type": "set_slam_config", "map_name": "...", "localization": bool}
+                                              {"type": "get_slam_config"}
+                                              {"type": "restart_slam"}
                             server → browser: event dicts from ROS topics
 
 Run
@@ -162,6 +165,21 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             elif msg_type == "get_maps":
                 if _bridge is not None:
                     _bridge.get_maps()
+
+            elif msg_type == "set_slam_config":
+                if _bridge is not None:
+                    _bridge.set_slam_config(
+                        map_name=str(msg.get("map_name", "")),
+                        localization=bool(msg.get("localization", False)),
+                    )
+
+            elif msg_type == "get_slam_config":
+                if _bridge is not None:
+                    _bridge.get_slam_config()
+
+            elif msg_type == "restart_slam":
+                if _bridge is not None:
+                    _bridge.restart_slam()
 
     except WebSocketDisconnect:
         _clients.discard(ws)
