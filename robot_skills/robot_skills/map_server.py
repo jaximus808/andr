@@ -8,9 +8,13 @@ Points of interest are stored in a SQLite database (maps.db) inside
 the maps directory, with a foreign-key join from points -> maps.
 """
 
+import json
 import os
 import pathlib
+import signal
 import sqlite3
+import subprocess
+import time
 
 _MIGRATIONS_DIR = pathlib.Path(__file__).parent / "migrations"
 
@@ -20,9 +24,13 @@ from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 from slam_toolbox.srv import SerializePoseGraph
 
-from andr.srv import SaveMap, GetMaps, SavePoint, GetMapPoints, GetMapWithPoints
+from andr.srv import (
+    SaveMap, GetMaps, SavePoint, GetMapPoints, GetMapWithPoints,
+    SetSlamConfig, GetSlamConfig, RestartSlam,
+)
 
 DEFAULT_MAPS_DIR = os.path.expanduser("~/andr_maps")
+SLAM_CONFIG_FILE = os.path.join(DEFAULT_MAPS_DIR, "slam_config.json")
 
 
 class MapServer(Node):
@@ -66,6 +74,25 @@ class MapServer(Node):
         )
         self._get_map_with_points_srv = self.create_service(
             GetMapWithPoints, "map_manager/get_map_with_points", self._get_map_with_points_cb
+        )
+        self._set_slam_config_srv = self.create_service(
+            SetSlamConfig, "map_manager/set_slam_config", self._set_slam_config_cb
+        )
+        self._get_slam_config_srv = self.create_service(
+            GetSlamConfig, "map_manager/get_slam_config", self._get_slam_config_cb
+        )
+        self._restart_slam_srv = self.create_service(
+            RestartSlam, "map_manager/restart_slam", self._restart_slam_cb
+        )
+
+        # Parameters for SLAM restart
+        self.declare_parameter(
+            "slam_params_mapping",
+            self._find_slam_params("slam_toolbox_params.yaml"),
+        )
+        self.declare_parameter(
+            "slam_params_localization",
+            self._find_slam_params("slam_toolbox_localization_params.yaml"),
         )
 
         self.get_logger().info(
@@ -285,6 +312,129 @@ class MapServer(Node):
         response.x = [r[1] for r in point_rows]
         response.y = [r[2] for r in point_rows]
         return response
+
+    # ------------------------------------------------------------------
+    # set_slam_config service
+    # ------------------------------------------------------------------
+    def _set_slam_config_cb(
+        self, request: SetSlamConfig.Request, response: SetSlamConfig.Response
+    ):
+        map_name = request.map_name.strip()
+        localization = request.localization
+
+        self._db.execute(
+            "INSERT OR REPLACE INTO slam_config (key, value) VALUES ('map_name', ?)",
+            (map_name,),
+        )
+        self._db.execute(
+            "INSERT OR REPLACE INTO slam_config (key, value) VALUES ('localization', ?)",
+            ("true" if localization else "false",),
+        )
+        self._db.commit()
+
+        # Write JSON config file so robot.launch.py can read it at startup
+        pathlib.Path(self._maps_dir).mkdir(parents=True, exist_ok=True)
+        config_path = os.path.join(self._maps_dir, "slam_config.json")
+        map_file_path = os.path.join(self._maps_dir, map_name) if map_name else ""
+        with open(config_path, "w") as f:
+            json.dump({"map_name": map_name, "map_file": map_file_path, "localization": localization}, f)
+
+        response.success = True
+        response.message = (
+            f"SLAM config saved: map='{map_name}', "
+            f"mode={'localization' if localization else 'mapping'}"
+        )
+        self.get_logger().info(response.message)
+        return response
+
+    # ------------------------------------------------------------------
+    # get_slam_config service
+    # ------------------------------------------------------------------
+    def _get_slam_config_cb(
+        self, request: GetSlamConfig.Request, response: GetSlamConfig.Response
+    ):
+        row_map = self._db.execute(
+            "SELECT value FROM slam_config WHERE key = 'map_name'"
+        ).fetchone()
+        row_loc = self._db.execute(
+            "SELECT value FROM slam_config WHERE key = 'localization'"
+        ).fetchone()
+
+        response.success = True
+        response.map_name = row_map[0] if row_map else ""
+        response.localization = (row_loc[0] == "true") if row_loc else False
+        response.message = "OK"
+        return response
+
+    # ------------------------------------------------------------------
+    # restart_slam service
+    # ------------------------------------------------------------------
+    def _restart_slam_cb(
+        self, request: RestartSlam.Request, response: RestartSlam.Response
+    ):
+        # Read current config
+        row_map = self._db.execute(
+            "SELECT value FROM slam_config WHERE key = 'map_name'"
+        ).fetchone()
+        row_loc = self._db.execute(
+            "SELECT value FROM slam_config WHERE key = 'localization'"
+        ).fetchone()
+        map_name = row_map[0] if row_map else ""
+        localization = (row_loc[0] == "true") if row_loc else False
+
+        # Kill existing slam_toolbox processes
+        try:
+            subprocess.run(
+                ["pkill", "-f", "slam_toolbox_node"],
+                capture_output=True, timeout=5.0,
+            )
+            time.sleep(1.5)
+        except Exception as e:
+            self.get_logger().warn(f"pkill failed: {e}")
+
+        # Determine params file
+        if localization and map_name:
+            params_file = self.get_parameter("slam_params_localization").value
+            map_file = os.path.join(self._maps_dir, map_name)
+            executable = "localization_slam_toolbox_node"
+            extra_params = ["-p", f"map_file_name:={map_file}"]
+        else:
+            params_file = self.get_parameter("slam_params_mapping").value
+            executable = "async_slam_toolbox_node"
+            extra_params = []
+
+        cmd = [
+            "ros2", "run", "slam_toolbox", executable,
+            "--ros-args", "--params-file", params_file,
+        ] + extra_params
+
+        try:
+            proc = subprocess.Popen(cmd, start_new_session=True)
+            response.success = True
+            response.message = (
+                f"SLAM restarted as '{executable}' (PID {proc.pid}), "
+                f"map='{map_name}', mode={'localization' if localization else 'mapping'}"
+            )
+            self.get_logger().info(response.message)
+        except Exception as e:
+            response.success = False
+            response.message = f"Failed to restart SLAM: {e}"
+            self.get_logger().error(response.message)
+
+        return response
+
+    # ------------------------------------------------------------------
+    # Package path helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _find_slam_params(filename: str) -> str:
+        """Resolve the path to a SLAM params file from the andr_sim package."""
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            pkg = get_package_share_directory("andr_sim")
+            return os.path.join(pkg, "config", filename)
+        except Exception:
+            return ""
 
     # ------------------------------------------------------------------
     # OGM save helpers

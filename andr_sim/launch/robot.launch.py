@@ -1,3 +1,4 @@
+import json
 import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -8,9 +9,29 @@ from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 
+def _load_slam_config():
+    """Read persisted SLAM config from ~/andr_maps/slam_config.json.
+
+    Returns (map_file, localization_str) with safe defaults when the file
+    is absent or malformed.
+    """
+    config_path = os.path.expanduser("~/andr_maps/slam_config.json")
+    try:
+        with open(config_path) as f:
+            cfg = json.load(f)
+        map_file = cfg.get("map_file", "") or ""
+        localization = cfg.get("localization", False)
+        return map_file, "true" if localization else "false"
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        return "", "false"
+
+
 def generate_launch_description():
     pkg_share = get_package_share_directory("andr_sim")
     gazebo_ros_share = get_package_share_directory("gazebo_ros")
+
+    # Load persisted SLAM config so defaults match the last UI selection
+    _cfg_map_file, _cfg_localization = _load_slam_config()
 
     world_file = LaunchConfiguration("world")
     use_sim_time = LaunchConfiguration("use_sim_time")
@@ -104,7 +125,11 @@ def generate_launch_description():
         executable="map_server",
         name="map_server",
         output="screen",
-        parameters=[{"use_sim_time": True}],
+        parameters=[{
+            "use_sim_time": True,
+            "slam_params_mapping": os.path.join(pkg_share, "config", "slam_toolbox_params.yaml"),
+            "slam_params_localization": os.path.join(pkg_share, "config", "slam_toolbox_localization_params.yaml"),
+        }],
     )
 
     return LaunchDescription([
@@ -118,12 +143,12 @@ def generate_launch_description():
             description="Path to Gazebo world file",
         ),
         DeclareLaunchArgument(
-            "localization", default_value="false",
-            description="Run in localization mode instead of mapping",
+            "localization", default_value=_cfg_localization,
+            description="Run in localization mode instead of mapping (default from slam_config.json)",
         ),
         DeclareLaunchArgument(
-            "map_file", default_value="",
-            description="Path to serialized map (without extension) for localization mode",
+            "map_file", default_value=_cfg_map_file,
+            description="Path to serialized map (without extension) for localization mode (default from slam_config.json)",
         ),
 
         rsp,

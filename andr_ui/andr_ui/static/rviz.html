@@ -264,6 +264,77 @@
       line-height: 1.6;
     }
 
+    /* ── SLAM config section ─────────────────────────────────────────── */
+    #slam-mode-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0 8px;
+      font-size: 0.8rem;
+    }
+    #slam-mode-toggle .toggle-label {
+      color: #aaa;
+    }
+    .mode-pill {
+      display: inline-flex;
+      border: 1px solid #444;
+      border-radius: 20px;
+      overflow: hidden;
+      font-size: 0.72rem;
+    }
+    .mode-pill button {
+      padding: 4px 10px;
+      background: transparent;
+      border: none;
+      color: #666;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .mode-pill button.active {
+      background: #1565c0;
+      color: #fff;
+    }
+    .mode-pill button:hover:not(.active) {
+      background: #1e1e1e;
+      color: #ccc;
+    }
+
+    #slam-map-select {
+      width: 100%;
+      padding: 6px 8px;
+      background: #1c1c1c;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 0.8rem;
+      margin-bottom: 8px;
+    }
+    #slam-map-select:focus { outline: none; border-color: #42a5f5; }
+
+    #btn-apply-slam {
+      width: 100%;
+      padding: 7px;
+      background: #1b5e20;
+      border: 1px solid #2e7d32;
+      border-radius: 5px;
+      color: #a5d6a7;
+      font-size: 0.8rem;
+      cursor: pointer;
+      margin-bottom: 4px;
+    }
+    #btn-apply-slam:hover { background: #2e7d32; color: #fff; }
+    #btn-apply-slam:disabled { background: #1a1a1a; color: #444; cursor: not-allowed; border-color: #333; }
+
+    #slam-status {
+      font-size: 0.72rem;
+      color: #888;
+      min-height: 1.4em;
+      padding: 2px 0;
+      word-break: break-word;
+    }
+    #slam-status.ok  { color: #66bb6a; }
+    #slam-status.err { color: #ef5350; }
+
     /* ── Legend ──────────────────────────────────────────────────────── */
     .legend {
       display: flex;
@@ -353,6 +424,26 @@
         <input type="text" id="poi-map-name" placeholder="Map name" value="default" />
         <p style="font-size:0.72rem;color:#888;margin-bottom:6px;">Click on the map to place the point</p>
       </div>
+    </div>
+
+    <!-- SLAM Config -->
+    <div class="sp-section">
+      <h3>SLAM Config</h3>
+
+      <div id="slam-mode-toggle">
+        <span class="toggle-label">Mode:</span>
+        <div class="mode-pill">
+          <button id="mode-btn-mapping" class="active" title="Create a new map">Mapping</button>
+          <button id="mode-btn-localize" title="Localize on a saved map">Localization</button>
+        </div>
+      </div>
+
+      <select id="slam-map-select" title="Select a saved map for localization">
+        <option value="">— select saved map —</option>
+      </select>
+
+      <button id="btn-apply-slam">Apply &amp; Restart SLAM</button>
+      <div id="slam-status"></div>
     </div>
 
     <div class="sp-section" style="padding-bottom:4px;">
@@ -1127,8 +1218,9 @@ function connect() {
     statusLbl.textContent = 'connected';
     reconnectDelay = 1000;
 
-    // Request maps list
+    // Request maps list and current SLAM config
     ws.send(JSON.stringify({ type: 'get_maps' }));
+    ws.send(JSON.stringify({ type: 'get_slam_config' }));
   };
 
   ws.onclose = () => {
@@ -1232,14 +1324,47 @@ function handleMessage(msg) {
     }
 
     case 'map_list': {
-      // Could populate a dropdown, for now just log
-      if (msg.maps && msg.maps.length > 0) {
+      if (msg.maps) {
         console.log('Available maps:', msg.maps);
-        // Auto-set first map name
+        // Populate SLAM map dropdown
+        populateMapDropdown(msg.maps);
+        // Also auto-set POI map input
         const mapInput = document.getElementById('poi-map-name');
         if (mapInput.value === 'default' && msg.maps.length > 0) {
           mapInput.value = msg.maps[0];
         }
+      }
+      break;
+    }
+
+    case 'slam_config': {
+      if (msg.success) {
+        setSlamMode(msg.localization);
+        if (msg.map_name) slamMapSelect.value = msg.map_name;
+      }
+      break;
+    }
+
+    case 'slam_config_result': {
+      if (msg.success) {
+        setSlamStatusMsg('Config saved. Restarting SLAM…', false);
+        // Now trigger restart
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'restart_slam' }));
+        }
+      } else {
+        btnApplySlam.disabled = false;
+        setSlamStatusMsg('Save failed: ' + (msg.message || '?'), true);
+      }
+      break;
+    }
+
+    case 'restart_slam_result': {
+      btnApplySlam.disabled = false;
+      if (msg.success) {
+        setSlamStatusMsg('SLAM restarted. ' + (msg.message || ''), false);
+      } else {
+        setSlamStatusMsg('Restart failed: ' + (msg.message || '?'), true);
       }
       break;
     }
@@ -1260,6 +1385,66 @@ document.addEventListener('keydown', (e) => {
     case '-': document.getElementById('btn-zoom-out').click(); break;
     case 'p': case 'P': setTool(activeTool === 'poi' ? 'pan' : 'poi'); break;
     case 'Escape': setTool('pan'); break;
+  }
+});
+
+// ── SLAM Config UI ──────────────────────────────────────────────────────────
+const slamMapSelect   = document.getElementById('slam-map-select');
+const slamStatus      = document.getElementById('slam-status');
+const btnApplySlam    = document.getElementById('btn-apply-slam');
+const modeBtnMapping  = document.getElementById('mode-btn-mapping');
+const modeBtnLocalize = document.getElementById('mode-btn-localize');
+
+let slamLocalization = false;   // current UI state
+let savedMaps = [];             // list of map names from server
+
+function setSlamMode(localize) {
+  slamLocalization = localize;
+  modeBtnMapping.classList.toggle('active', !localize);
+  modeBtnLocalize.classList.toggle('active', localize);
+  slamMapSelect.disabled = !localize;
+  slamMapSelect.style.opacity = localize ? '1' : '0.4';
+}
+
+modeBtnMapping.addEventListener('click',  () => setSlamMode(false));
+modeBtnLocalize.addEventListener('click', () => setSlamMode(true));
+setSlamMode(false);
+
+function populateMapDropdown(maps) {
+  savedMaps = maps;
+  const prev = slamMapSelect.value;
+  // Keep existing options except the placeholder
+  while (slamMapSelect.options.length > 1) slamMapSelect.remove(1);
+  for (const m of maps) {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    slamMapSelect.appendChild(opt);
+  }
+  if (prev && maps.includes(prev)) slamMapSelect.value = prev;
+}
+
+function setSlamStatusMsg(msg, isErr) {
+  slamStatus.textContent = msg;
+  slamStatus.className = isErr ? 'err' : (msg ? 'ok' : '');
+}
+
+btnApplySlam.addEventListener('click', () => {
+  if (slamLocalization && !slamMapSelect.value) {
+    setSlamStatusMsg('Select a map for localization mode.', true);
+    return;
+  }
+
+  btnApplySlam.disabled = true;
+  setSlamStatusMsg('Saving config…', false);
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // Step 1: save config, then restart
+    ws.send(JSON.stringify({
+      type: 'set_slam_config',
+      map_name: slamLocalization ? slamMapSelect.value : '',
+      localization: slamLocalization,
+    }));
   }
 });
 

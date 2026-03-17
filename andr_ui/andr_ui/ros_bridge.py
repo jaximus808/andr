@@ -30,7 +30,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 
 from andr.msg import Prompt, RobotSpeech
 from andr.action import TaskGoal
-from andr.srv import SavePoint, GetMapPoints, GetMaps
+from andr.srv import SavePoint, GetMapPoints, GetMaps, SetSlamConfig, GetSlamConfig, RestartSlam
 
 
 class RosBridgeNode(Node):
@@ -95,6 +95,9 @@ class RosBridgeNode(Node):
         self._save_point_client = self.create_client(SavePoint, "map_manager/save_point")
         self._get_points_client = self.create_client(GetMapPoints, "map_manager/get_map_points")
         self._get_maps_client = self.create_client(GetMaps, "map_manager/get_maps")
+        self._set_slam_config_client = self.create_client(SetSlamConfig, "map_manager/set_slam_config")
+        self._get_slam_config_client = self.create_client(GetSlamConfig, "map_manager/get_slam_config")
+        self._restart_slam_client = self.create_client(RestartSlam, "map_manager/restart_slam")
 
         # ── Periodic node/action discovery (every 5s) ────────────────────
         self._discovery_timer = self.create_timer(5.0, self._discover_nodes)
@@ -357,6 +360,71 @@ class RosBridgeNode(Node):
         except Exception as e:
             self._push({"type": "map_list", "success": False,
                          "message": str(e), "maps": []})
+
+    # ── SLAM config ──────────────────────────────────────────────────────
+
+    def set_slam_config(self, map_name: str, localization: bool) -> None:
+        """Persist SLAM map selection and mode."""
+        if not self._set_slam_config_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "slam_config_result", "success": False,
+                         "message": "map_manager/set_slam_config not available"})
+            return
+
+        req = SetSlamConfig.Request()
+        req.map_name = map_name
+        req.localization = localization
+
+        future = self._set_slam_config_client.call_async(req)
+        future.add_done_callback(self._on_set_slam_config_result)
+
+    def _on_set_slam_config_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({"type": "slam_config_result", "success": res.success, "message": res.message})
+        except Exception as e:
+            self._push({"type": "slam_config_result", "success": False, "message": str(e)})
+
+    def get_slam_config(self) -> None:
+        """Retrieve current SLAM config and push to UI."""
+        if not self._get_slam_config_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "slam_config", "success": False,
+                         "map_name": "", "localization": False,
+                         "message": "map_manager/get_slam_config not available"})
+            return
+
+        future = self._get_slam_config_client.call_async(GetSlamConfig.Request())
+        future.add_done_callback(self._on_get_slam_config_result)
+
+    def _on_get_slam_config_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({
+                "type": "slam_config",
+                "success": res.success,
+                "map_name": res.map_name,
+                "localization": res.localization,
+                "message": res.message,
+            })
+        except Exception as e:
+            self._push({"type": "slam_config", "success": False,
+                         "map_name": "", "localization": False, "message": str(e)})
+
+    def restart_slam(self) -> None:
+        """Restart SLAM Toolbox with the stored config."""
+        if not self._restart_slam_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "restart_slam_result", "success": False,
+                         "message": "map_manager/restart_slam not available"})
+            return
+
+        future = self._restart_slam_client.call_async(RestartSlam.Request())
+        future.add_done_callback(self._on_restart_slam_result)
+
+    def _on_restart_slam_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({"type": "restart_slam_result", "success": res.success, "message": res.message})
+        except Exception as e:
+            self._push({"type": "restart_slam_result", "success": False, "message": str(e)})
 
     # ── Node / action server discovery ───────────────────────────────────
 
