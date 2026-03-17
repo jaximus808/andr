@@ -1,0 +1,1273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ANDR — 2D Map View</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0d0d0d;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    header {
+      padding: 8px 16px;
+      background: #161616;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+    header h1 { font-size: 1rem; font-weight: 600; letter-spacing: 0.05em; }
+    header a {
+      color: #42a5f5;
+      text-decoration: none;
+      font-size: 0.8rem;
+      margin-left: 8px;
+    }
+    header a:hover { text-decoration: underline; }
+
+    #status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #555;
+      flex-shrink: 0;
+    }
+    #status-dot.connected { background: #4caf50; }
+    #status-dot.error     { background: #f44336; }
+    #status-label { font-size: 0.75rem; color: #666; }
+
+    /* ── Main layout ────────────────────────────────────────────────── */
+    .main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── Canvas container ───────────────────────────────────────────── */
+    #canvas-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #1a1a1a;
+      cursor: grab;
+    }
+    #canvas-container.dragging { cursor: grabbing; }
+    #canvas-container.placing  { cursor: crosshair; }
+
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    /* ── Coordinate display ─────────────────────────────────────────── */
+    #coord-display {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      background: rgba(0,0,0,0.7);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-family: 'Consolas', monospace;
+      color: #aaa;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* ── Zoom controls ──────────────────────────────────────────────── */
+    #zoom-controls {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      z-index: 5;
+    }
+    #zoom-controls button {
+      width: 32px;
+      height: 32px;
+      background: rgba(30,30,30,0.9);
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #ccc;
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #zoom-controls button:hover { background: #333; }
+
+    /* ── Side panel ─────────────────────────────────────────────────── */
+    #side-panel {
+      width: 280px;
+      background: #111;
+      border-left: 1px solid #2a2a2a;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+
+    .sp-header {
+      padding: 8px 12px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      background: #161616;
+      border-bottom: 1px solid #222;
+    }
+
+    .sp-section {
+      padding: 10px 12px;
+      border-bottom: 1px solid #1e1e1e;
+    }
+    .sp-section h3 {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #666;
+      margin-bottom: 8px;
+    }
+
+    /* ── Layer toggles ──────────────────────────────────────────────── */
+    .layer-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+      font-size: 0.8rem;
+    }
+    .layer-toggle input[type="checkbox"] {
+      accent-color: #42a5f5;
+    }
+    .layer-color {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    /* ── Tool buttons ───────────────────────────────────────────────── */
+    .tool-btn {
+      display: block;
+      width: 100%;
+      padding: 8px 10px;
+      margin-bottom: 4px;
+      background: #1c1c1c;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #ccc;
+      font-size: 0.8rem;
+      cursor: pointer;
+      text-align: left;
+    }
+    .tool-btn:hover { background: #252525; }
+    .tool-btn.active { border-color: #42a5f5; color: #42a5f5; background: #1a2a3a; }
+
+    /* ── POI input ──────────────────────────────────────────────────── */
+    #poi-form {
+      display: none;
+      padding: 8px 0;
+    }
+    #poi-form.visible { display: block; }
+
+    #poi-form input, #poi-form select {
+      width: 100%;
+      padding: 6px 8px;
+      margin-bottom: 6px;
+      background: #1c1c1c;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 0.8rem;
+    }
+    #poi-form input:focus, #poi-form select:focus {
+      outline: none;
+      border-color: #42a5f5;
+    }
+
+    #poi-form button {
+      width: 100%;
+      padding: 6px;
+      background: #1565c0;
+      border: none;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    #poi-form button:hover { background: #1976d2; }
+
+    /* ── POI list ────────────────────────────────────────────────────── */
+    #poi-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 12px;
+    }
+
+    .poi-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 6px;
+      margin-bottom: 3px;
+      border-radius: 4px;
+      background: #181818;
+      font-size: 0.78rem;
+      font-family: 'Consolas', monospace;
+      cursor: pointer;
+    }
+    .poi-item:hover { background: #222; }
+    .poi-item .poi-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff5722;
+      flex-shrink: 0;
+    }
+    .poi-item .poi-coords {
+      color: #666;
+      font-size: 0.7rem;
+      margin-left: auto;
+    }
+
+    /* ── Info overlay ───────────────────────────────────────────────── */
+    #info-overlay {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: rgba(0,0,0,0.7);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-family: 'Consolas', monospace;
+      color: #aaa;
+      pointer-events: none;
+      z-index: 5;
+      line-height: 1.6;
+    }
+
+    /* ── Legend ──────────────────────────────────────────────────────── */
+    .legend {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 0.7rem;
+      color: #888;
+      padding: 6px 12px;
+      background: #161616;
+      border-top: 1px solid #222;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .legend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div id="status-dot"></div>
+  <h1>ANDR — 2D Map View</h1>
+  <a href="/">Dashboard</a>
+  <span style="flex:1"></span>
+  <span id="status-label">disconnected</span>
+</header>
+
+<div class="main">
+  <!-- Canvas area -->
+  <div id="canvas-container">
+    <canvas id="map-canvas"></canvas>
+    <div id="info-overlay">Waiting for map data...</div>
+    <div id="coord-display">x: 0.00, y: 0.00</div>
+    <div id="zoom-controls">
+      <button id="btn-zoom-in" title="Zoom in">+</button>
+      <button id="btn-zoom-out" title="Zoom out">-</button>
+      <button id="btn-fit" title="Fit map">F</button>
+    </div>
+  </div>
+
+  <!-- Side panel -->
+  <div id="side-panel">
+    <div class="sp-header">Layers &amp; Tools</div>
+
+    <div class="sp-section">
+      <h3>Layers</h3>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-map" checked />
+        <span class="layer-color" style="background:#444"></span>
+        Occupancy Grid
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-scan" checked />
+        <span class="layer-color" style="background:#00e676"></span>
+        Laser Scan
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-robot" checked />
+        <span class="layer-color" style="background:#ff9800"></span>
+        Robot
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-poi" checked />
+        <span class="layer-color" style="background:#ff5722"></span>
+        Points of Interest
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-grid" checked />
+        <span class="layer-color" style="background:#333"></span>
+        Grid Lines
+      </label>
+    </div>
+
+    <div class="sp-section">
+      <h3>Tools</h3>
+      <button class="tool-btn" id="tool-pan" title="Click and drag to pan">Pan (default)</button>
+      <button class="tool-btn" id="tool-poi" title="Click on map to place a point">Place Point of Interest</button>
+
+      <div id="poi-form">
+        <input type="text" id="poi-label" placeholder="Point label (e.g. Kitchen)" />
+        <input type="text" id="poi-map-name" placeholder="Map name" value="default" />
+        <p style="font-size:0.72rem;color:#888;margin-bottom:6px;">Click on the map to place the point</p>
+      </div>
+    </div>
+
+    <div class="sp-section" style="padding-bottom:4px;">
+      <h3>Points of Interest</h3>
+      <button class="tool-btn" id="btn-load-points" style="margin-bottom:4px;">Load Points</button>
+    </div>
+    <div id="poi-list"></div>
+  </div>
+</div>
+
+<div class="legend">
+  <span class="legend-item"><span class="legend-swatch" style="background:#e0e0e0"></span> Free</span>
+  <span class="legend-item"><span class="legend-swatch" style="background:#1a1a1a"></span> Occupied</span>
+  <span class="legend-item"><span class="legend-swatch" style="background:#3a3a3a"></span> Unknown</span>
+  <span class="legend-item"><span class="legend-swatch" style="background:#00e676"></span> Laser Scan</span>
+  <span class="legend-item"><span class="legend-swatch" style="background:#ff9800"></span> Robot</span>
+  <span class="legend-item"><span class="legend-swatch" style="background:#ff5722"></span> POI</span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+//  ANDR 2D RViz Web View
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── DOM refs ────────────────────────────────────────────────────────────────
+const container   = document.getElementById('canvas-container');
+const canvas      = document.getElementById('map-canvas');
+const ctx         = canvas.getContext('2d');
+const coordDisp   = document.getElementById('coord-display');
+const infoOverlay = document.getElementById('info-overlay');
+const statusDot   = document.getElementById('status-dot');
+const statusLbl   = document.getElementById('status-label');
+const poiList     = document.getElementById('poi-list');
+
+// ── State ───────────────────────────────────────────────────────────────────
+let mapData    = null;   // {width, height, resolution, origin_x, origin_y, imageData}
+let mapImage   = null;   // OffscreenCanvas or ImageData for map
+let scanData   = null;   // {angle_min, angle_increment, range_min, range_max, ranges[]}
+let robotPose  = null;   // {x, y, yaw}
+let pois       = [];     // [{label, x, y}]
+
+// View transform: canvas pixel = (world - panX) * zoom, y is flipped
+let zoom = 40;           // pixels per meter
+let panX = 0;            // world X at canvas left
+let panY = 0;            // world Y at canvas bottom
+
+// Interaction
+let isDragging = false;
+let dragStartX = 0, dragStartY = 0;
+let dragPanX = 0, dragPanY = 0;
+let activeTool = 'pan'; // 'pan' | 'poi'
+let pendingPoiClick = null;
+
+// Layers
+const layers = {
+  map:   true,
+  scan:  true,
+  robot: true,
+  poi:   true,
+  grid:  true,
+};
+
+// Robot dimensions (from URDF: 0.40 x 0.30m chassis)
+const ROBOT_LENGTH = 0.40;
+const ROBOT_WIDTH  = 0.30;
+
+// ── Layer toggles ───────────────────────────────────────────────────────────
+['map', 'scan', 'robot', 'poi', 'grid'].forEach(id => {
+  const el = document.getElementById('layer-' + id);
+  el.addEventListener('change', () => { layers[id] = el.checked; draw(); });
+});
+
+// ── Tool buttons ────────────────────────────────────────────────────────────
+const toolPanBtn = document.getElementById('tool-pan');
+const toolPoiBtn = document.getElementById('tool-poi');
+const poiForm    = document.getElementById('poi-form');
+
+function setTool(tool) {
+  activeTool = tool;
+  toolPanBtn.classList.toggle('active', tool === 'pan');
+  toolPoiBtn.classList.toggle('active', tool === 'poi');
+  poiForm.classList.toggle('visible', tool === 'poi');
+  container.classList.toggle('placing', tool === 'poi');
+}
+
+toolPanBtn.addEventListener('click', () => setTool('pan'));
+toolPoiBtn.addEventListener('click', () => setTool('poi'));
+setTool('pan');
+
+// ── Coordinate conversion ───────────────────────────────────────────────────
+function worldToCanvas(wx, wy) {
+  const cx = (wx - panX) * zoom;
+  const cy = canvas.height - (wy - panY) * zoom;
+  return [cx, cy];
+}
+
+function canvasToWorld(cx, cy) {
+  const wx = cx / zoom + panX;
+  const wy = (canvas.height - cy) / zoom + panY;
+  return [wx, wy];
+}
+
+// ── Resize canvas ───────────────────────────────────────────────────────────
+function resizeCanvas() {
+  const rect = container.getBoundingClientRect();
+  canvas.width  = rect.width;
+  canvas.height = rect.height;
+  draw();
+}
+window.addEventListener('resize', resizeCanvas);
+
+// ── Draw ────────────────────────────────────────────────────────────────────
+function draw() {
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  if (layers.grid) drawGrid();
+
+  // Map
+  if (layers.map && mapImage) drawMap();
+
+  // Laser scan
+  if (layers.scan && scanData && robotPose) drawScan();
+
+  // Robot
+  if (layers.robot && robotPose) drawRobot();
+
+  // POIs
+  if (layers.poi) drawPOIs();
+
+  // Origin cross
+  drawOriginCross();
+}
+
+function drawGrid() {
+  const W = canvas.width, H = canvas.height;
+  // Determine grid spacing in world meters
+  let spacing = 1.0;
+  if (zoom < 15) spacing = 5.0;
+  if (zoom < 5)  spacing = 10.0;
+  if (zoom > 80) spacing = 0.5;
+  if (zoom > 200) spacing = 0.1;
+
+  ctx.strokeStyle = '#252525';
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+
+  // Vertical lines
+  const xStart = Math.floor(panX / spacing) * spacing;
+  const xEnd   = panX + W / zoom;
+  for (let wx = xStart; wx <= xEnd; wx += spacing) {
+    const [cx] = worldToCanvas(wx, 0);
+    ctx.moveTo(cx, 0);
+    ctx.lineTo(cx, H);
+  }
+
+  // Horizontal lines
+  const yStart = Math.floor(panY / spacing) * spacing;
+  const yEnd   = panY + H / zoom;
+  for (let wy = yStart; wy <= yEnd; wy += spacing) {
+    const [, cy] = worldToCanvas(0, wy);
+    ctx.moveTo(0, cy);
+    ctx.lineTo(W, cy);
+  }
+  ctx.stroke();
+}
+
+function drawOriginCross() {
+  const [cx, cy] = worldToCanvas(0, 0);
+  const len = 15;
+
+  // X axis (red)
+  ctx.strokeStyle = '#e53935';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + len, cy);
+  ctx.stroke();
+
+  // Y axis (green)
+  ctx.strokeStyle = '#43a047';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx, cy - len);
+  ctx.stroke();
+
+  // Center dot
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawMap() {
+  if (!mapData || !mapImage) return;
+
+  const ox = mapData.origin_x;
+  const oy = mapData.origin_y;
+  const res = mapData.resolution;
+
+  // Top-left of map in world coords: origin is bottom-left of the OGM
+  const [cx, cy] = worldToCanvas(ox, oy + mapData.height * res);
+
+  const drawW = mapData.width  * res * zoom;
+  const drawH = mapData.height * res * zoom;
+
+  ctx.drawImage(mapImage, cx, cy, drawW, drawH);
+}
+
+function drawScan() {
+  const px = robotPose.x;
+  const py = robotPose.y;
+  const yaw = robotPose.yaw;
+
+  ctx.fillStyle = 'rgba(0, 230, 118, 0.6)';
+
+  let angle = scanData.angle_min;
+  for (let i = 0; i < scanData.ranges.length; i++) {
+    const r = scanData.ranges[i];
+    if (r < 0 || r < scanData.range_min || r > scanData.range_max) {
+      angle += scanData.angle_increment;
+      continue;
+    }
+
+    const worldAngle = yaw + angle;
+    const wx = px + r * Math.cos(worldAngle);
+    const wy = py + r * Math.sin(worldAngle);
+    const [cx, cy] = worldToCanvas(wx, wy);
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(1.5, zoom * 0.02), 0, Math.PI * 2);
+    ctx.fill();
+
+    angle += scanData.angle_increment;
+  }
+}
+
+function drawRobot() {
+  const [cx, cy] = worldToCanvas(robotPose.x, robotPose.y);
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  // In canvas, positive Y is down, but our world has Y up.
+  // Yaw 0 = facing +X (right). Canvas rotation is clockwise.
+  ctx.rotate(-robotPose.yaw);
+
+  // Chassis rectangle (centered on base_link, but chassis is offset back)
+  // From XACRO: chassis_joint origin is at (-0.3, 0, wheel_radius) from base_link
+  // chassis visual is at (chassis_length/2, 0, ...) from chassis link
+  // So chassis center in base_link frame: -0.3 + 0.2 = -0.1 in X
+  const cLen = ROBOT_LENGTH * zoom;
+  const cWid = ROBOT_WIDTH  * zoom;
+  const chassisOffsetX = -0.1 * zoom;
+
+  // Chassis body
+  ctx.fillStyle = 'rgba(255, 152, 0, 0.7)';
+  ctx.strokeStyle = '#ff9800';
+  ctx.lineWidth = 1.5;
+  ctx.fillRect(chassisOffsetX - cLen/2, -cWid/2, cLen, cWid);
+  ctx.strokeRect(chassisOffsetX - cLen/2, -cWid/2, cLen, cWid);
+
+  // Direction arrow
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(8, 0);
+  ctx.lineTo(-3, -5);
+  ctx.lineTo(-3, 5);
+  ctx.closePath();
+  ctx.fill();
+
+  // Wheels
+  ctx.fillStyle = '#555';
+  const wheelW = 0.04 * zoom;
+  const wheelH = 0.05 * zoom * 2;
+  // Left wheel
+  ctx.fillRect(-wheelW/2, -cWid/2 - wheelW, wheelW * 2, wheelH * 0.4);
+  // Right wheel
+  ctx.fillRect(-wheelW/2, cWid/2, wheelW * 2, wheelH * 0.4);
+
+  ctx.restore();
+
+  // Label
+  ctx.fillStyle = '#ff9800';
+  ctx.font = '10px Consolas, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('ANDR', cx, cy - cWid/2 - 6);
+}
+
+function drawPOIs() {
+  for (const poi of pois) {
+    const [cx, cy] = worldToCanvas(poi.x, poi.y);
+
+    // Pin
+    ctx.fillStyle = '#ff5722';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner dot
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Label
+    ctx.fillStyle = '#ff5722';
+    ctx.font = 'bold 11px Segoe UI, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(poi.label, cx, cy - 10);
+  }
+}
+
+// ── Build map image from data ───────────────────────────────────────────────
+function buildMapImage(data) {
+  const w = data.width;
+  const h = data.height;
+
+  // Decode base64 -> zlib decompress -> raw bytes
+  const compressed = Uint8Array.from(atob(data.data_b64), c => c.charCodeAt(0));
+  const rawBytes = inflate(compressed);
+
+  // Create offscreen canvas for the map
+  const offscreen = document.createElement('canvas');
+  offscreen.width = w;
+  offscreen.height = h;
+  const offCtx = offscreen.getContext('2d');
+  const imgData = offCtx.createImageData(w, h);
+
+  for (let row = 0; row < h; row++) {
+    for (let col = 0; col < w; col++) {
+      // Map data is row-major, bottom row first in ROS convention
+      // We flip vertically: canvas row 0 = map row (h-1)
+      const srcIdx = (h - 1 - row) * w + col;
+      const val = rawBytes[srcIdx] - 128; // undo +128 offset → -1..100
+
+      const dstIdx = (row * w + col) * 4;
+
+      if (val < 0) {
+        // Unknown: dark grey
+        imgData.data[dstIdx]     = 50;
+        imgData.data[dstIdx + 1] = 50;
+        imgData.data[dstIdx + 2] = 55;
+        imgData.data[dstIdx + 3] = 255;
+      } else if (val === 0) {
+        // Free: light
+        imgData.data[dstIdx]     = 200;
+        imgData.data[dstIdx + 1] = 200;
+        imgData.data[dstIdx + 2] = 205;
+        imgData.data[dstIdx + 3] = 255;
+      } else if (val >= 100) {
+        // Occupied: very dark
+        imgData.data[dstIdx]     = 15;
+        imgData.data[dstIdx + 1] = 15;
+        imgData.data[dstIdx + 2] = 20;
+        imgData.data[dstIdx + 3] = 255;
+      } else {
+        // Partial occupancy: gradient
+        const g = Math.round(200 - (val / 100) * 185);
+        imgData.data[dstIdx]     = g;
+        imgData.data[dstIdx + 1] = g;
+        imgData.data[dstIdx + 2] = g + 5;
+        imgData.data[dstIdx + 3] = 255;
+      }
+    }
+  }
+
+  offCtx.putImageData(imgData, 0, 0);
+  return offscreen;
+}
+
+// ── Minimal zlib inflate (pako-less, uses DecompressionStream if available) ─
+function inflate(compressed) {
+  // Use synchronous approach with a tiny zlib decoder
+  // For browsers supporting DecompressionStream, we fallback to sync inflate
+  return inflateSync(compressed);
+}
+
+// Minimal inflate using raw deflate decoding
+// We use a fetch-based trick for sync-like decompression
+let _inflateReady = false;
+let _inflateQueue = [];
+
+function inflateSync(data) {
+  // Try using pako if loaded, otherwise manual approach
+  // Build zlib header check: first two bytes
+  // Use built-in DecompressionStream via a sync workaround
+  try {
+    return _zlibInflateManual(data);
+  } catch(e) {
+    console.error('Inflate error:', e);
+    return new Uint8Array(0);
+  }
+}
+
+// Manual zlib inflate — thin wrapper over DecompressionStream
+// Since we need sync, we precompute using a service worker trick
+// Actually, let's use a simple pure-JS inflate for zlib
+// Minimal implementation: enough to handle zlib-compressed OGM data
+
+function _zlibInflateManual(input) {
+  // Zlib format: 2-byte header + deflate data + 4-byte checksum
+  // Skip zlib header (2 bytes) and checksum (4 bytes)
+  const deflateData = input.slice(2, input.length - 4);
+  return _inflateRaw(deflateData);
+}
+
+function _inflateRaw(input) {
+  // Minimal DEFLATE decoder
+  const output = [];
+  let pos = 0;
+  let bitBuf = 0;
+  let bitCount = 0;
+
+  function readBits(n) {
+    while (bitCount < n) {
+      if (pos >= input.length) throw new Error('Unexpected end of input');
+      bitBuf |= input[pos++] << bitCount;
+      bitCount += 8;
+    }
+    const val = bitBuf & ((1 << n) - 1);
+    bitBuf >>= n;
+    bitCount -= n;
+    return val;
+  }
+
+  function readByte() {
+    return readBits(8);
+  }
+
+  // Fixed Huffman tables
+  const fixedLitLenLengths = new Uint8Array(288);
+  for (let i = 0; i <= 143; i++) fixedLitLenLengths[i] = 8;
+  for (let i = 144; i <= 255; i++) fixedLitLenLengths[i] = 9;
+  for (let i = 256; i <= 279; i++) fixedLitLenLengths[i] = 7;
+  for (let i = 280; i <= 287; i++) fixedLitLenLengths[i] = 8;
+
+  const fixedDistLengths = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) fixedDistLengths[i] = 5;
+
+  function buildHuffmanTable(lengths) {
+    const maxLen = Math.max(...lengths);
+    const counts = new Uint16Array(maxLen + 1);
+    for (const l of lengths) if (l) counts[l]++;
+
+    const offsets = new Uint16Array(maxLen + 1);
+    for (let i = 1; i <= maxLen; i++) offsets[i] = offsets[i-1] + counts[i-1];
+
+    const symbols = new Uint16Array(lengths.length);
+    for (let i = 0; i < lengths.length; i++) {
+      if (lengths[i]) symbols[offsets[lengths[i]]++] = i;
+    }
+
+    return { counts, symbols, maxLen };
+  }
+
+  function decodeSymbol(table) {
+    let code = 0, first = 0, idx = 0;
+    for (let len = 1; len <= table.maxLen; len++) {
+      code |= readBits(1);
+      const count = table.counts[len];
+      if (code < first + count) {
+        return table.symbols[idx + (code - first)];
+      }
+      idx += count;
+      first = (first + count) << 1;
+      code <<= 1;
+    }
+    throw new Error('Invalid Huffman code');
+  }
+
+  const lenBase = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+  const lenExtra = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+  const distBase = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+  const distExtra = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+
+  const codeLenOrder = [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
+
+  function inflateBlock(litLenTable, distTable) {
+    while (true) {
+      const sym = decodeSymbol(litLenTable);
+      if (sym < 256) {
+        output.push(sym);
+      } else if (sym === 256) {
+        return; // end of block
+      } else {
+        const lenIdx = sym - 257;
+        let length = lenBase[lenIdx] + readBits(lenExtra[lenIdx]);
+
+        const distSym = decodeSymbol(distTable);
+        let dist = distBase[distSym] + readBits(distExtra[distSym]);
+
+        // Copy from output buffer
+        const start = output.length - dist;
+        for (let i = 0; i < length; i++) {
+          output.push(output[start + i]);
+        }
+      }
+    }
+  }
+
+  // Process blocks
+  let bFinal = 0;
+  while (!bFinal) {
+    bFinal = readBits(1);
+    const bType = readBits(2);
+
+    if (bType === 0) {
+      // Stored block
+      bitBuf = 0;
+      bitCount = 0;
+      const len = input[pos] | (input[pos+1] << 8);
+      pos += 4; // skip len and nlen
+      for (let i = 0; i < len; i++) output.push(input[pos++]);
+    } else if (bType === 1) {
+      // Fixed Huffman
+      const litLenTable = buildHuffmanTable(fixedLitLenLengths);
+      const distTable = buildHuffmanTable(fixedDistLengths);
+      inflateBlock(litLenTable, distTable);
+    } else if (bType === 2) {
+      // Dynamic Huffman
+      const hLit = readBits(5) + 257;
+      const hDist = readBits(5) + 1;
+      const hCLen = readBits(4) + 4;
+
+      const codeLenCodeLengths = new Uint8Array(19);
+      for (let i = 0; i < hCLen; i++) {
+        codeLenCodeLengths[codeLenOrder[i]] = readBits(3);
+      }
+
+      const codeLenTable = buildHuffmanTable(codeLenCodeLengths);
+
+      const allLengths = new Uint8Array(hLit + hDist);
+      let idx = 0;
+      while (idx < allLengths.length) {
+        const sym = decodeSymbol(codeLenTable);
+        if (sym < 16) {
+          allLengths[idx++] = sym;
+        } else if (sym === 16) {
+          const repeat = readBits(2) + 3;
+          const val = allLengths[idx - 1];
+          for (let i = 0; i < repeat; i++) allLengths[idx++] = val;
+        } else if (sym === 17) {
+          const repeat = readBits(3) + 3;
+          for (let i = 0; i < repeat; i++) allLengths[idx++] = 0;
+        } else if (sym === 18) {
+          const repeat = readBits(7) + 11;
+          for (let i = 0; i < repeat; i++) allLengths[idx++] = 0;
+        }
+      }
+
+      const litLenLengths = allLengths.slice(0, hLit);
+      const distLengths = allLengths.slice(hLit);
+
+      const litLenTable = buildHuffmanTable(litLenLengths);
+      const distTable = buildHuffmanTable(distLengths);
+      inflateBlock(litLenTable, distTable);
+    } else {
+      throw new Error('Invalid block type');
+    }
+  }
+
+  return new Uint8Array(output);
+}
+
+// ── Mouse interaction ───────────────────────────────────────────────────────
+container.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+
+  if (activeTool === 'poi') {
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const [wx, wy] = canvasToWorld(cx, cy);
+
+    const label = document.getElementById('poi-label').value.trim();
+    const mapName = document.getElementById('poi-map-name').value.trim();
+
+    if (!label) {
+      alert('Please enter a label for the point of interest');
+      return;
+    }
+
+    // Send to ROS via WebSocket
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'save_point',
+        map_name: mapName || 'default',
+        label: label,
+        x: wx,
+        y: wy,
+      }));
+    }
+
+    // Add locally immediately for feedback
+    pois.push({ label, x: wx, y: wy });
+    renderPoiList();
+    draw();
+
+    document.getElementById('poi-label').value = '';
+    return;
+  }
+
+  // Pan tool
+  isDragging = true;
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  dragPanX = panX;
+  dragPanY = panY;
+  container.classList.add('dragging');
+});
+
+container.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+  const [wx, wy] = canvasToWorld(cx, cy);
+  coordDisp.textContent = `x: ${wx.toFixed(2)}, y: ${wy.toFixed(2)}`;
+
+  if (isDragging) {
+    const dx = e.clientX - dragStartX;
+    const dy = e.clientY - dragStartY;
+    panX = dragPanX - dx / zoom;
+    panY = dragPanY + dy / zoom; // Y is flipped
+    draw();
+  }
+});
+
+container.addEventListener('mouseup', () => {
+  isDragging = false;
+  container.classList.remove('dragging');
+});
+
+container.addEventListener('mouseleave', () => {
+  isDragging = false;
+  container.classList.remove('dragging');
+});
+
+// Zoom with scroll wheel
+container.addEventListener('wheel', (e) => {
+  e.preventDefault();
+
+  const rect = canvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+
+  // World position under cursor before zoom
+  const [wx, wy] = canvasToWorld(cx, cy);
+
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  zoom = Math.max(1, Math.min(1000, zoom * factor));
+
+  // Adjust pan so the world point under cursor stays fixed
+  panX = wx - cx / zoom;
+  panY = wy - (canvas.height - cy) / zoom;
+
+  draw();
+}, { passive: false });
+
+// Zoom buttons
+document.getElementById('btn-zoom-in').addEventListener('click', () => {
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  const [wx, wy] = canvasToWorld(cx, cy);
+  zoom = Math.min(1000, zoom * 1.4);
+  panX = wx - cx / zoom;
+  panY = wy - (canvas.height - cy) / zoom;
+  draw();
+});
+
+document.getElementById('btn-zoom-out').addEventListener('click', () => {
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  const [wx, wy] = canvasToWorld(cx, cy);
+  zoom = Math.max(1, zoom / 1.4);
+  panX = wx - cx / zoom;
+  panY = wy - (canvas.height - cy) / zoom;
+  draw();
+});
+
+document.getElementById('btn-fit').addEventListener('click', fitMap);
+
+function fitMap() {
+  if (!mapData) return;
+  const mapW = mapData.width  * mapData.resolution;
+  const mapH = mapData.height * mapData.resolution;
+
+  const padFactor = 0.9;
+  const zoomX = (canvas.width  * padFactor) / mapW;
+  const zoomY = (canvas.height * padFactor) / mapH;
+  zoom = Math.min(zoomX, zoomY);
+
+  // Center the map
+  panX = mapData.origin_x - ((canvas.width / zoom) - mapW) / 2;
+  panY = mapData.origin_y - ((canvas.height / zoom) - mapH) / 2;
+
+  draw();
+}
+
+// ── POI list rendering ──────────────────────────────────────────────────────
+function renderPoiList() {
+  poiList.innerHTML = '';
+  for (const poi of pois) {
+    const el = document.createElement('div');
+    el.className = 'poi-item';
+    el.innerHTML = `<span class="poi-dot"></span>${escHtml(poi.label)}<span class="poi-coords">(${poi.x.toFixed(1)}, ${poi.y.toFixed(1)})</span>`;
+    el.addEventListener('click', () => {
+      // Center view on this POI
+      panX = poi.x - canvas.width / (2 * zoom);
+      panY = poi.y - canvas.height / (2 * zoom);
+      draw();
+    });
+    poiList.appendChild(el);
+  }
+}
+
+document.getElementById('btn-load-points').addEventListener('click', () => {
+  const mapName = document.getElementById('poi-map-name').value.trim() || 'default';
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'get_points', map_name: mapName }));
+  }
+});
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Info overlay update ─────────────────────────────────────────────────────
+function updateInfo() {
+  const lines = [];
+  if (mapData) {
+    lines.push(`Map: ${mapData.width}x${mapData.height} @ ${mapData.resolution.toFixed(3)}m/px`);
+    lines.push(`Origin: (${mapData.origin_x.toFixed(2)}, ${mapData.origin_y.toFixed(2)})`);
+  } else {
+    lines.push('Map: waiting for /map...');
+  }
+  if (robotPose) {
+    lines.push(`Robot: (${robotPose.x.toFixed(2)}, ${robotPose.y.toFixed(2)}) yaw=${(robotPose.yaw * 180 / Math.PI).toFixed(1)}°`);
+    if (robotPose.vx !== undefined) {
+      lines.push(`Vel: ${robotPose.vx.toFixed(2)} m/s, ${robotPose.wz.toFixed(2)} rad/s`);
+    }
+  } else {
+    lines.push('Robot: waiting for /odom...');
+  }
+  if (scanData) {
+    lines.push(`Scan: ${scanData.ranges.length} rays`);
+  }
+  lines.push(`Zoom: ${zoom.toFixed(1)} px/m`);
+  lines.push(`POIs: ${pois.length}`);
+  infoOverlay.textContent = lines.join('\n');
+}
+
+// ── WebSocket ───────────────────────────────────────────────────────────────
+let ws = null;
+let reconnectDelay = 1000;
+
+function connect() {
+  const url = `ws://${location.host}/ws`;
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    statusDot.className = 'connected';
+    statusLbl.textContent = 'connected';
+    reconnectDelay = 1000;
+
+    // Request maps list
+    ws.send(JSON.stringify({ type: 'get_maps' }));
+  };
+
+  ws.onclose = () => {
+    statusDot.className = '';
+    statusLbl.textContent = 'reconnecting...';
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 16000);
+  };
+
+  ws.onerror = () => {
+    statusDot.className = 'error';
+  };
+
+  ws.onmessage = (evt) => {
+    let msg;
+    try { msg = JSON.parse(evt.data); }
+    catch { return; }
+    handleMessage(msg);
+  };
+}
+
+let needsRedraw = false;
+let redrawScheduled = false;
+
+function scheduleRedraw() {
+  if (!redrawScheduled) {
+    redrawScheduled = true;
+    requestAnimationFrame(() => {
+      redrawScheduled = false;
+      draw();
+      updateInfo();
+    });
+  }
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+    case 'map_data': {
+      mapData = {
+        width:      msg.width,
+        height:     msg.height,
+        resolution: msg.resolution,
+        origin_x:   msg.origin_x,
+        origin_y:   msg.origin_y,
+        data_b64:   msg.data_b64,
+      };
+      try {
+        mapImage = buildMapImage(mapData);
+      } catch(e) {
+        console.error('Failed to build map image:', e);
+        mapImage = null;
+      }
+      // Auto-fit on first map
+      if (!mapImage) break;
+      if (!mapData._fitted) {
+        mapData._fitted = true;
+        fitMap();
+      }
+      scheduleRedraw();
+      break;
+    }
+
+    case 'scan_data': {
+      scanData = {
+        angle_min:       msg.angle_min,
+        angle_increment: msg.angle_increment,
+        range_min:       msg.range_min,
+        range_max:       msg.range_max,
+        ranges:          msg.ranges,
+      };
+      scheduleRedraw();
+      break;
+    }
+
+    case 'robot_pose': {
+      robotPose = {
+        x:   msg.x,
+        y:   msg.y,
+        yaw: msg.yaw,
+        vx:  msg.vx,
+        wz:  msg.wz,
+      };
+      scheduleRedraw();
+      break;
+    }
+
+    case 'poi_result': {
+      if (!msg.success) {
+        console.warn('POI save failed:', msg.message);
+      }
+      break;
+    }
+
+    case 'poi_list': {
+      if (msg.success && msg.points) {
+        pois = msg.points;
+        renderPoiList();
+        scheduleRedraw();
+      }
+      break;
+    }
+
+    case 'map_list': {
+      // Could populate a dropdown, for now just log
+      if (msg.maps && msg.maps.length > 0) {
+        console.log('Available maps:', msg.maps);
+        // Auto-set first map name
+        const mapInput = document.getElementById('poi-map-name');
+        if (mapInput.value === 'default' && msg.maps.length > 0) {
+          mapInput.value = msg.maps[0];
+        }
+      }
+      break;
+    }
+
+    // Ignore dashboard-only events
+    default:
+      break;
+  }
+}
+
+// ── Keyboard shortcuts ──────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+  switch(e.key) {
+    case 'f': case 'F': fitMap(); break;
+    case '=': case '+': document.getElementById('btn-zoom-in').click(); break;
+    case '-': document.getElementById('btn-zoom-out').click(); break;
+    case 'p': case 'P': setTool(activeTool === 'poi' ? 'pan' : 'poi'); break;
+    case 'Escape': setTool('pan'); break;
+  }
+});
+
+// ── Boot ────────────────────────────────────────────────────────────────────
+resizeCanvas();
+connect();
+// Periodic redraw for animation smoothness
+setInterval(() => { updateInfo(); }, 1000);
+</script>
+</body>
+</html>

@@ -1,24 +1,36 @@
 """
 ros_bridge.py — ROS 2 node that:
   • Subscribes to robot status topics and pushes events to connected WebSocket clients.
+  • Subscribes to visualization topics (map, scan, odom) for the 2D RViz web view.
   • Sends task goals to /task_manager/execute when the UI sends a prompt.
+  • Provides save/get points-of-interest passthrough to map_manager services.
   • Periodically discovers active nodes and action servers for the status panel.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import math
+import struct
 import threading
+import time
+import zlib
 from typing import Callable
 
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from std_msgs.msg import String
+from nav_msgs.msg import OccupancyGrid, Odometry
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import PoseWithCovarianceStamped
 
 from andr.msg import Prompt, RobotSpeech
 from andr.action import TaskGoal
+from andr.srv import SavePoint, GetMapPoints, GetMaps
 
 
 class RosBridgeNode(Node):
@@ -40,16 +52,54 @@ class RosBridgeNode(Node):
             String, "/robot/status", self._on_robot_status, 10,
         )
 
+        # ── Visualization subscribers ────────────────────────────────────
+        # Map uses transient-local durability so we get the last published map
+        map_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self.create_subscription(
+            OccupancyGrid, "/map", self._on_map, map_qos,
+        )
+
+        self.create_subscription(
+            LaserScan, "/scan", self._on_scan, 10,
+        )
+
+        self.create_subscription(
+            Odometry, "/odom", self._on_odom, 10,
+        )
+
+        # AMCL pose (if available)
+        self.create_subscription(
+            PoseWithCovarianceStamped, "/amcl_pose", self._on_amcl_pose, 10,
+        )
+
+        # ── Throttle state for visualization ─────────────────────────────
+        self._last_map_send = 0.0
+        self._last_scan_send = 0.0
+        self._last_odom_send = 0.0
+        self._MAP_INTERVAL = 2.0     # send map at most every 2s
+        self._SCAN_INTERVAL = 0.2    # send scan at most every 200ms
+        self._ODOM_INTERVAL = 0.1    # send odom at most every 100ms
+
         # ── Action client to task_manager ────────────────────────────────
         self._task_client = ActionClient(self, TaskGoal, "/task_manager/execute")
 
         # ── Publisher (kept for backwards compat / logging) ──────────────
         self._prompt_pub = self.create_publisher(Prompt, "/ui/prompt", 10)
 
+        # ── Service clients for map_manager ──────────────────────────────
+        self._save_point_client = self.create_client(SavePoint, "map_manager/save_point")
+        self._get_points_client = self.create_client(GetMapPoints, "map_manager/get_map_points")
+        self._get_maps_client = self.create_client(GetMaps, "map_manager/get_maps")
+
         # ── Periodic node/action discovery (every 5s) ────────────────────
         self._discovery_timer = self.create_timer(5.0, self._discover_nodes)
 
-        self.get_logger().info("RosBridgeNode ready")
+        self.get_logger().info("RosBridgeNode ready (with 2D viz support)")
 
     # ── Incoming topic handlers ──────────────────────────────────────────
 
@@ -69,6 +119,92 @@ class RosBridgeNode(Node):
 
     def _on_robot_status(self, msg: String) -> None:
         self._push({"type": "robot_status", "text": msg.data})
+
+    # ── Visualization topic handlers ─────────────────────────────────────
+
+    def _on_map(self, msg: OccupancyGrid) -> None:
+        now = time.monotonic()
+        if now - self._last_map_send < self._MAP_INTERVAL:
+            return
+        self._last_map_send = now
+
+        width = msg.info.width
+        height = msg.info.height
+        resolution = msg.info.resolution
+        origin_x = msg.info.origin.position.x
+        origin_y = msg.info.origin.position.y
+
+        # Compress raw occupancy data (int8 values: -1, 0..100)
+        raw_bytes = bytes([(v + 128) & 0xFF for v in msg.data])
+        compressed = zlib.compress(raw_bytes, level=6)
+        b64_data = base64.b64encode(compressed).decode("ascii")
+
+        self._push({
+            "type": "map_data",
+            "width": width,
+            "height": height,
+            "resolution": resolution,
+            "origin_x": origin_x,
+            "origin_y": origin_y,
+            "data_b64": b64_data,
+        })
+
+    def _on_scan(self, msg: LaserScan) -> None:
+        now = time.monotonic()
+        if now - self._last_scan_send < self._SCAN_INTERVAL:
+            return
+        self._last_scan_send = now
+
+        # Downsample scan to reduce payload (every 4th ray)
+        step = 4
+        ranges = msg.ranges[::step]
+
+        self._push({
+            "type": "scan_data",
+            "angle_min": msg.angle_min,
+            "angle_max": msg.angle_max,
+            "angle_increment": msg.angle_increment * step,
+            "range_min": msg.range_min,
+            "range_max": msg.range_max,
+            "ranges": [r if math.isfinite(r) else -1.0 for r in ranges],
+        })
+
+    def _on_odom(self, msg: Odometry) -> None:
+        now = time.monotonic()
+        if now - self._last_odom_send < self._ODOM_INTERVAL:
+            return
+        self._last_odom_send = now
+
+        pos = msg.pose.pose.position
+        ori = msg.pose.pose.orientation
+        # Convert quaternion to yaw
+        siny_cosp = 2.0 * (ori.w * ori.z + ori.x * ori.y)
+        cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        self._push({
+            "type": "robot_pose",
+            "x": pos.x,
+            "y": pos.y,
+            "yaw": yaw,
+            "vx": msg.twist.twist.linear.x,
+            "wz": msg.twist.twist.angular.z,
+        })
+
+    def _on_amcl_pose(self, msg: PoseWithCovarianceStamped) -> None:
+        pos = msg.pose.pose.position
+        ori = msg.pose.pose.orientation
+        siny_cosp = 2.0 * (ori.w * ori.z + ori.x * ori.y)
+        cosy_cosp = 1.0 - 2.0 * (ori.y * ori.y + ori.z * ori.z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        self._push({
+            "type": "robot_pose",
+            "x": pos.x,
+            "y": pos.y,
+            "yaw": yaw,
+            "source": "amcl",
+        })
 
     # ── Task submission (action client) ──────────────────────────────────
 
@@ -134,6 +270,93 @@ class RosBridgeNode(Node):
             "text": res.summary,
             "emotion": "satisfied" if res.success else "concerned",
         })
+
+    # ── Points of interest ───────────────────────────────────────────────
+
+    def save_point(self, map_name: str, label: str, x: float, y: float) -> None:
+        """Save a point of interest via map_manager service."""
+        if not self._save_point_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "poi_result", "success": False,
+                         "message": "map_manager/save_point service not available"})
+            return
+
+        req = SavePoint.Request()
+        req.map_name = map_name
+        req.label = label
+        req.x = x
+        req.y = y
+
+        future = self._save_point_client.call_async(req)
+        future.add_done_callback(self._on_save_point_result)
+
+    def _on_save_point_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({
+                "type": "poi_result",
+                "success": res.success,
+                "message": res.message,
+            })
+        except Exception as e:
+            self._push({"type": "poi_result", "success": False, "message": str(e)})
+
+    def get_points(self, map_name: str) -> None:
+        """Get all POIs for a map via map_manager service."""
+        if not self._get_points_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "poi_list", "success": False,
+                         "message": "map_manager/get_map_points service not available"})
+            return
+
+        req = GetMapPoints.Request()
+        req.map_name = map_name
+
+        future = self._get_points_client.call_async(req)
+        future.add_done_callback(self._on_get_points_result)
+
+    def _on_get_points_result(self, future) -> None:
+        try:
+            res = future.result()
+            points = []
+            if res.success:
+                for i in range(len(res.labels)):
+                    points.append({
+                        "label": res.labels[i],
+                        "x": res.x[i],
+                        "y": res.y[i],
+                    })
+            self._push({
+                "type": "poi_list",
+                "success": res.success,
+                "message": res.message,
+                "points": points,
+            })
+        except Exception as e:
+            self._push({"type": "poi_list", "success": False,
+                         "message": str(e), "points": []})
+
+    def get_maps(self) -> None:
+        """Get list of saved maps."""
+        if not self._get_maps_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "map_list", "success": False,
+                         "message": "map_manager/get_maps service not available",
+                         "maps": []})
+            return
+
+        req = GetMaps.Request()
+        future = self._get_maps_client.call_async(req)
+        future.add_done_callback(self._on_get_maps_result)
+
+    def _on_get_maps_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({
+                "type": "map_list",
+                "success": True,
+                "maps": list(res.map_names),
+            })
+        except Exception as e:
+            self._push({"type": "map_list", "success": False,
+                         "message": str(e), "maps": []})
 
     # ── Node / action server discovery ───────────────────────────────────
 
