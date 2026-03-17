@@ -25,6 +25,8 @@ find_package(ament_index_cpp REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/Prompt.msg"
     "msg/RobotSpeech.msg"
+    "srv/SaveMap.srv"
+    "srv/GetMaps.srv"
     "action/Wander.action"
     "action/Agent.action"
     "action/ExecuteSkill.action"

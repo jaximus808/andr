@@ -172,9 +172,8 @@ void SkillExecutorNode::execute(std::shared_ptr<GoalHandle> goal_handle)
 
   auto goal_future = entry.client->async_send_goal(downstream_goal, send_options);
 
-  // Wait for goal acceptance
-  if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), goal_future, 10s)
-      != rclcpp::FutureReturnCode::SUCCESS)
+  // Wait for goal acceptance (the multi-threaded executor handles callbacks)
+  if (goal_future.wait_for(10s) != std::future_status::ready)
   {
     result->success = false;
     result->error_message = "Failed to send goal to '" + entry.action_server + "'";
@@ -190,10 +189,9 @@ void SkillExecutorNode::execute(std::shared_ptr<GoalHandle> goal_handle)
     return;
   }
 
-  // Wait for the result
+  // Wait for the result (the multi-threaded executor handles callbacks)
   auto result_future = entry.client->async_get_result(downstream_handle);
-  if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future, 60s)
-      != rclcpp::FutureReturnCode::SUCCESS)
+  if (result_future.wait_for(60s) != std::future_status::ready)
   {
     result->success = false;
     result->error_message = "Timed out waiting for result from '" + entry.action_server + "'";
@@ -234,7 +232,10 @@ void SkillExecutorNode::execute(std::shared_ptr<GoalHandle> goal_handle)
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<skill_executor::SkillExecutorNode>());
+  auto node = std::make_shared<skill_executor::SkillExecutorNode>();
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(node);
+  executor.spin();
   rclcpp::shutdown();
   return 0;
 }

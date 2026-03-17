@@ -17,6 +17,7 @@ setup(
             "speak_server = robot_skills.speak_server:main",
             "walk_server  = robot_skills.walk_server:main",
             "spin_server  = robot_skills.spin_server:main",
+            "map_server   = robot_skills.map_server:main",
         ],
     },
 )

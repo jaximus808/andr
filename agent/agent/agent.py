@@ -42,7 +42,7 @@ def _create_langchain_llm(backend: str, model: str, host: str, temperature: floa
     """Instantiate the appropriate LangChain chat model."""
     if backend == "ollama":
         from langchain_ollama import ChatOllama
-        kwargs = {"temperature": temperature}
+        kwargs = {"temperature": temperature, "num_ctx": 4096, "keep_alive": "10m"}
         if model:
             kwargs["model"] = model
         kwargs["base_url"] = host
@@ -177,6 +177,9 @@ class AgentServer(Node):
         self._send_feedback(goal_handle, 1, "thinking", "Invoking LangChain agent…", 0.1)
 
         try:
+            import time as _time
+            from langchain_core.messages import AIMessage, ToolMessage
+
             # Create a react agent graph per-goal
             agent = create_react_agent(
                 self._llm,
@@ -184,12 +187,59 @@ class AgentServer(Node):
                 prompt=system_message,
             )
 
-            # Run the agent — langgraph handles the ReAct loop internally
-            response = agent.invoke(
+            # Stream through the ReAct loop so we can log each step
+            self.get_logger().info("Sending prompt to LLM — waiting for response…")
+            t0 = _time.monotonic()
+            step = 0
+            response = None
+
+            for event in agent.stream(
                 {"messages": [HumanMessage(content=goal.prompt)]},
                 config={"recursion_limit": max_iter},
-            )
-            output = response["messages"][-1].content
+                stream_mode="updates",
+            ):
+                elapsed = _time.monotonic() - t0
+                step += 1
+
+                for _, update in event.items():
+                    msgs = update.get("messages", [])
+                    for msg in msgs:
+                        if isinstance(msg, AIMessage):
+                            if msg.tool_calls:
+                                for tc in msg.tool_calls:
+                                    self.get_logger().info(
+                                        f"[{elapsed:.1f}s] LLM decided to call tool: "
+                                        f"'{tc['name']}' args={tc['args']}"
+                                    )
+                                    self._send_feedback(
+                                        goal_handle, step, "tool_call",
+                                        f"Calling {tc['name']}…", 0.3,
+                                    )
+                            elif msg.content:
+                                self.get_logger().info(
+                                    f"[{elapsed:.1f}s] LLM response: {msg.content[:150]}"
+                                )
+                        elif isinstance(msg, ToolMessage):
+                            self.get_logger().info(
+                                f"[{elapsed:.1f}s] Tool '{msg.name}' returned: "
+                                f"{msg.content[:120]}"
+                            )
+                            self._send_feedback(
+                                goal_handle, step, "tool_result",
+                                f"{msg.name} done", 0.6,
+                            )
+
+                    # Keep last update as response
+                    response = update
+
+            total = _time.monotonic() - t0
+            self.get_logger().info(f"[{total:.1f}s] ReAct loop finished ({step} steps)")
+
+            # Extract final output from the last message
+            if response and "messages" in response:
+                output = response["messages"][-1].content
+            else:
+                output = "Agent completed but produced no output."
 
             self.get_logger().info(f"Agent completed: {output[:200]}")
             self._send_feedback(goal_handle, 2, "done", output, 1.0)

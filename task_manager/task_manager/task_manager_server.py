@@ -11,6 +11,7 @@ Flow:
 from __future__ import annotations
 
 import logging
+import threading
 
 import rclpy
 from rclpy.action import ActionServer, ActionClient, CancelResponse, GoalResponse
@@ -102,7 +103,15 @@ class TaskManagerServer(Node):
             agent_goal,
             feedback_callback=lambda fb: self._on_agent_feedback(goal_handle, fb),
         )
-        rclpy.spin_until_future_complete(self, send_future, timeout_sec=10.0)
+        send_event = threading.Event()
+        send_future.add_done_callback(lambda _: send_event.set())
+        if not send_event.wait(timeout=10.0):
+            msg = "Agent goal send timed out after 10s."
+            self.get_logger().error(msg)
+            goal_handle.abort()
+            result.success = False
+            result.summary = msg
+            return result
 
         agent_goal_handle = send_future.result()
         if agent_goal_handle is None or not agent_goal_handle.accepted:
@@ -118,7 +127,9 @@ class TaskManagerServer(Node):
 
         # Wait for agent to finish — no timeout, skills can run for a long time
         result_future = agent_goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
+        result_event = threading.Event()
+        result_future.add_done_callback(lambda _: result_event.set())
+        result_event.wait()
 
         wrapped = result_future.result()
         if wrapped is None:

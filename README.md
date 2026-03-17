@@ -10,7 +10,8 @@ A ROS 2 (Humble) robot stack with an autonomous LLM agent (LangChain + LangGraph
 - **Agent**: LangChain ReAct agent (via `langgraph`) served as a ROS 2 action server. Connects to Ollama (local) or OpenAI. Tools are auto-generated from `skills.yaml`.
 - **Task Manager**: Bridges the web UI to the agent — accepts prompts, forwards to `/agent/prompt`, relays results back.
 - **Skill Executor**: C++ config-driven router that dispatches `ExecuteSkill` actions to the correct hardware skill server based on `skill_executor_config.yaml`. Currently routes `speak` and `walk`.
-- **Robot Skills**: Mock action servers for `speak` (TTS) and `walk`. Placeholder for real hardware drivers.
+- **Robot Skills**: Mock action servers for `speak` (TTS) and `walk`. Map management service for saving/loading SLAM maps. Placeholder for real hardware drivers.
+- **Map Manager**: Service node that saves the current SLAM occupancy grid + pose graph to disk, lists saved maps, and supports switching to localization mode via launch args.
 - **Web UI**: FastAPI + WebSocket dashboard at `http://localhost:8080` — chat interface, event log, and system status panel showing active nodes/action servers.
 
 ---
@@ -23,7 +24,7 @@ A ROS 2 (Humble) robot stack with an autonomous LLM agent (LangChain + LangGraph
 | `agent` | `ament_python` | LLM agent action server (LangGraph ReAct agent on `/agent/prompt`) |
 | `task_manager` | `ament_python` | Task bridge — receives tasks from UI, forwards to agent, relays results |
 | `skill_executor` | `ament_cmake` | C++ action server that dispatches robot skills based on YAML config |
-| `robot_skills` | `ament_python` | Mock hardware-interface action servers (speak, walk) |
+| `robot_skills` | `ament_python` | Mock hardware-interface action servers (speak, walk) + map management service |
 | `andr_ui` | `ament_python` | FastAPI web dashboard (event log, chat, system status panel) |
 
 ---
@@ -154,6 +155,72 @@ ros2 launch andr andr.launch.py log_level:=debug
 
 ---
 
+## Simulation
+
+### Launch the simulation
+
+```bash
+source install/setup.bash
+
+# Default — mapping mode (SLAM builds a new map)
+ros2 launch andr_sim robot.launch.py
+
+# Localization mode — load a previously saved map
+ros2 launch andr_sim robot.launch.py localization:=true map_file:=$HOME/andr_maps/my_map
+```
+
+### Simulation launch arguments
+
+| Argument | Default | Description |
+|---|---|---|
+| `use_sim_time` | `true` | Use Gazebo simulation clock |
+| `world` | `test_world.world` | Path to Gazebo world file |
+| `localization` | `false` | Run SLAM Toolbox in localization mode instead of mapping |
+| `map_file` | *(empty)* | Path to serialized map for localization (without file extension) |
+
+---
+
+## Map Management
+
+The `map_server` node starts automatically with the simulation and provides services for saving and retrieving SLAM maps. Saved maps are stored in `~/andr_maps/` by default.
+
+### Services
+
+| Service | Type | Description |
+|---|---|---|
+| `/map_manager/save_map` | `andr/srv/SaveMap` | Save the current occupancy grid + SLAM pose graph to disk |
+| `/map_manager/get_maps` | `andr/srv/GetMaps` | List all saved map names |
+
+### Save a map
+
+```bash
+ros2 service call /map_manager/save_map andr/srv/SaveMap "{map_name: 'my_map'}"
+```
+
+This saves to `~/andr_maps/`:
+- `my_map.pgm` + `my_map.yaml` — standard occupancy grid (viewable in any image viewer)
+- `my_map.posegraph` + `my_map.data` — SLAM Toolbox pose graph (needed for localization)
+
+If the name already exists, the files are overwritten.
+
+### List saved maps
+
+```bash
+ros2 service call /map_manager/get_maps andr/srv/GetMaps
+```
+
+### Localize on a saved map
+
+Once you have a saved map, launch the simulation in localization mode:
+
+```bash
+ros2 launch andr_sim robot.launch.py localization:=true map_file:=$HOME/andr_maps/my_map
+```
+
+This launches `localization_slam_toolbox_node` instead of the mapping node, loading the serialized pose graph so the robot localizes against the existing map.
+
+---
+
 ## Run nodes individually
 
 ```bash
@@ -171,6 +238,9 @@ ros2 run skill_executor skill_executor_node
 # Mock skill servers
 ros2 run robot_skills speak_server
 ros2 run robot_skills walk_server
+
+# Map management service
+ros2 run robot_skills map_server
 
 # Web UI server
 ros2 run andr_ui ui_server
@@ -213,6 +283,13 @@ robot_skills (individual action servers)
 | `/skills/speak` | `andr/action/ExecuteSkill` | TTS mock server |
 | `/skills/walk` | `andr/action/ExecuteSkill` | Walking mock server |
 | `/wander` | `andr/action/Wander` | Wander behavior |
+
+## Services
+
+| Service | Type | Description |
+|---|---|---|
+| `/map_manager/save_map` | `andr/srv/SaveMap` | Save current SLAM map to disk |
+| `/map_manager/get_maps` | `andr/srv/GetMaps` | List all saved maps |
 
 ## Key topics
 

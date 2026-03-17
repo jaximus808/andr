@@ -11,6 +11,8 @@
 
   <depend>rclpy</depend>
   <depend>andr</depend>
+  <depend>nav_msgs</depend>
+  <depend>slam_toolbox</depend>
 
   <export>
     <build_type>ament_python</build_type>

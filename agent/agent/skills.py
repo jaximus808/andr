@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-import rclpy
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +256,12 @@ class SkillExecutor:
         logger.info("SkillExecutor: sending skill='%s' params=%s", skill_name, goal_msg.params_json)
 
         send_future = self._action_client.send_goal_async(goal_msg)
-        rclpy.spin_until_future_complete(self._node, send_future, timeout_sec=self._timeout_s)
+        send_event = threading.Event()
+        send_future.add_done_callback(lambda _: send_event.set())
+        if not send_event.wait(timeout=self._timeout_s):
+            err = f"Skill goal '{skill_name}' send timed out after {self._timeout_s}s."
+            logger.error("SkillExecutor: %s", err)
+            return f"ERROR: {err}"
 
         goal_handle = send_future.result()
         if goal_handle is None or not goal_handle.accepted:
@@ -266,7 +271,9 @@ class SkillExecutor:
 
         # Wait for the result — no timeout, skills can run for a long time
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self._node, result_future)
+        result_event = threading.Event()
+        result_future.add_done_callback(lambda _: result_event.set())
+        result_event.wait()
 
         wrapped = result_future.result()
         if wrapped is None:
