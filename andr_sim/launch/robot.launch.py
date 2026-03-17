@@ -29,16 +29,18 @@ def _load_slam_config():
 def generate_launch_description():
     pkg_share = get_package_share_directory("andr_sim")
     gazebo_ros_share = get_package_share_directory("gazebo_ros")
+    nav2_bringup_share = get_package_share_directory("nav2_bringup")
 
     # Load persisted SLAM config so defaults match the last UI selection
     _cfg_map_file, _cfg_localization = _load_slam_config()
 
-    world_file = LaunchConfiguration("world")
+    world_file   = LaunchConfiguration("world")
     use_sim_time = LaunchConfiguration("use_sim_time")
     localization = LaunchConfiguration("localization")
-    map_file = LaunchConfiguration("map_file")
+    map_file     = LaunchConfiguration("map_file")
+    launch_nav2  = LaunchConfiguration("launch_nav2")
 
-    # --- Robot State Publisher ---
+    # ── Robot State Publisher ─────────────────────────────────────────────
     rsp = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_share, "launch", "rsp.launch.py")
@@ -46,7 +48,7 @@ def generate_launch_description():
         launch_arguments={"use_sim_time": use_sim_time}.items(),
     )
 
-    # --- Gazebo server + client ---
+    # ── Gazebo server + client ────────────────────────────────────────────
     gazebo_params = os.path.join(pkg_share, "config", "gazebo_params.yaml")
 
     gazebo = IncludeLaunchDescription(
@@ -59,7 +61,7 @@ def generate_launch_description():
         }.items(),
     )
 
-    # --- Spawn the robot ---
+    # ── Spawn the robot ───────────────────────────────────────────────────
     spawn_entity = Node(
         package="gazebo_ros",
         executable="spawn_entity.py",
@@ -73,7 +75,7 @@ def generate_launch_description():
         output="screen",
     )
 
-    # --- RViz ---
+    # ── RViz ─────────────────────────────────────────────────────────────
     rviz_config = os.path.join(pkg_share, "config", "sim.rviz")
 
     rviz = Node(
@@ -85,7 +87,7 @@ def generate_launch_description():
         parameters=[{"use_sim_time": True}],
     )
 
-    # --- SLAM Toolbox: mapping mode (default) ---
+    # ── SLAM Toolbox: mapping mode (default) ──────────────────────────────
     slam_mapping_params = os.path.join(
         pkg_share, "config", "slam_toolbox_params.yaml"
     )
@@ -99,7 +101,7 @@ def generate_launch_description():
         condition=UnlessCondition(localization),
     )
 
-    # --- SLAM Toolbox: localization mode ---
+    # ── SLAM Toolbox: localization mode ───────────────────────────────────
     slam_localization_params = os.path.join(
         pkg_share, "config", "slam_toolbox_localization_params.yaml"
     )
@@ -119,7 +121,7 @@ def generate_launch_description():
         condition=IfCondition(localization),
     )
 
-    # --- Map server node ---
+    # ── Map manager node (ANDR custom) ────────────────────────────────────
     map_server = Node(
         package="robot_skills",
         executable="map_server",
@@ -127,9 +129,34 @@ def generate_launch_description():
         output="screen",
         parameters=[{
             "use_sim_time": True,
-            "slam_params_mapping": os.path.join(pkg_share, "config", "slam_toolbox_params.yaml"),
-            "slam_params_localization": os.path.join(pkg_share, "config", "slam_toolbox_localization_params.yaml"),
+            "slam_params_mapping": os.path.join(
+                pkg_share, "config", "slam_toolbox_params.yaml"
+            ),
+            "slam_params_localization": os.path.join(
+                pkg_share, "config", "slam_toolbox_localization_params.yaml"
+            ),
         }],
+    )
+
+    # ── Nav2 navigation stack ─────────────────────────────────────────────
+    # Uses nav2_bringup's navigation.launch.py which manages:
+    #   planner_server, controller_server, behavior_server,
+    #   bt_navigator, waypoint_follower, velocity_smoother,
+    #   smoother_server, lifecycle_manager_navigation
+    #
+    # The global costmap's static_layer subscribes to SLAM Toolbox's /map
+    # topic (transient_local QoS), so no separate map_server is needed.
+    nav2_params = os.path.join(pkg_share, "config", "nav2_params.yaml")
+
+    nav2 = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(nav2_bringup_share, "launch", "navigation.launch.py")
+        ),
+        launch_arguments={
+            "use_sim_time": "True",
+            "params_file": nav2_params,
+        }.items(),
+        condition=IfCondition(launch_nav2),
     )
 
     return LaunchDescription([
@@ -144,11 +171,22 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "localization", default_value=_cfg_localization,
-            description="Run in localization mode instead of mapping (default from slam_config.json)",
+            description=(
+                "Run SLAM in localization mode instead of mapping "
+                "(default read from ~/andr_maps/slam_config.json)"
+            ),
         ),
         DeclareLaunchArgument(
             "map_file", default_value=_cfg_map_file,
-            description="Path to serialized map (without extension) for localization mode (default from slam_config.json)",
+            description=(
+                "Absolute path to serialized pose graph (without extension) "
+                "used when localization=true "
+                "(default read from ~/andr_maps/slam_config.json)"
+            ),
+        ),
+        DeclareLaunchArgument(
+            "launch_nav2", default_value="true",
+            description="Launch the Nav2 navigation stack",
         ),
 
         rsp,
@@ -157,5 +195,6 @@ def generate_launch_description():
         slam_mapping,
         slam_localization,
         map_server,
+        nav2,
         rviz,
     ])
