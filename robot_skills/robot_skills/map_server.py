@@ -12,6 +12,8 @@ import os
 import pathlib
 import sqlite3
 
+_MIGRATIONS_DIR = pathlib.Path(__file__).parent / "migrations"
+
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -71,29 +73,32 @@ class MapServer(Node):
         )
 
     # ------------------------------------------------------------------
-    # Database initialisation
+    # Database migrations
     # ------------------------------------------------------------------
     def _init_db(self):
-        cursor = self._db.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS maps (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                name       TEXT UNIQUE NOT NULL,
-                resolution REAL,
-                origin_x   REAL,
-                origin_y   REAL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS points (
-                id     INTEGER PRIMARY KEY AUTOINCREMENT,
-                map_id INTEGER NOT NULL REFERENCES maps(id),
-                label  TEXT NOT NULL,
-                x      REAL NOT NULL,
-                y      REAL NOT NULL
-            )
-        """)
+        """Run any pending SQL migrations in version order."""
+        # Bootstrap: schema_migrations table must exist before we query it.
+        # Migration 001 is always applied directly so the runner can record it.
+        bootstrap = _MIGRATIONS_DIR / "001_create_schema_migrations.sql"
+        self._db.executescript(bootstrap.read_text())
         self._db.commit()
+
+        applied = {
+            row[0]
+            for row in self._db.execute("SELECT version FROM schema_migrations")
+        }
+
+        pending = sorted(
+            f for f in _MIGRATIONS_DIR.glob("*.sql") if f.name not in applied
+        )
+        for migration_file in pending:
+            self.get_logger().info(f"Applying migration: {migration_file.name}")
+            self._db.executescript(migration_file.read_text())
+            self._db.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)",
+                (migration_file.name,),
+            )
+            self._db.commit()
 
     # ------------------------------------------------------------------
     # Subscriptions
