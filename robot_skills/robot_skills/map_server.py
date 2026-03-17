@@ -3,10 +3,14 @@
 Provides services to save the current SLAM map and list saved maps.
 Saved maps include both the occupancy grid (.pgm/.yaml) and the
 SLAM Toolbox pose graph (.posegraph/.data) for later localization.
+
+Points of interest are stored in a SQLite database (maps.db) inside
+the maps directory, with a foreign-key join from points -> maps.
 """
 
 import os
 import pathlib
+import sqlite3
 
 import numpy as np
 import rclpy
@@ -14,7 +18,7 @@ from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 from slam_toolbox.srv import SerializePoseGraph
 
-from andr.srv import SaveMap, GetMaps
+from andr.srv import SaveMap, GetMaps, SavePoint, GetMapPoints, GetMapWithPoints
 
 DEFAULT_MAPS_DIR = os.path.expanduser("~/andr_maps")
 
@@ -28,6 +32,11 @@ class MapServer(Node):
 
         # Ensure maps directory exists
         pathlib.Path(self._maps_dir).mkdir(parents=True, exist_ok=True)
+
+        # Initialise SQLite database
+        self._db_path = os.path.join(self._maps_dir, "maps.db")
+        self._db = sqlite3.connect(self._db_path, check_same_thread=False)
+        self._init_db()
 
         # Cache latest occupancy grid
         self._latest_map: OccupancyGrid | None = None
@@ -47,10 +56,44 @@ class MapServer(Node):
         self._get_srv = self.create_service(
             GetMaps, "map_manager/get_maps", self._get_maps_cb
         )
+        self._save_point_srv = self.create_service(
+            SavePoint, "map_manager/save_point", self._save_point_cb
+        )
+        self._get_map_points_srv = self.create_service(
+            GetMapPoints, "map_manager/get_map_points", self._get_map_points_cb
+        )
+        self._get_map_with_points_srv = self.create_service(
+            GetMapWithPoints, "map_manager/get_map_with_points", self._get_map_with_points_cb
+        )
 
         self.get_logger().info(
             f"MapServer ready — maps stored in '{self._maps_dir}'"
         )
+
+    # ------------------------------------------------------------------
+    # Database initialisation
+    # ------------------------------------------------------------------
+    def _init_db(self):
+        cursor = self._db.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS maps (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT UNIQUE NOT NULL,
+                resolution REAL,
+                origin_x   REAL,
+                origin_y   REAL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS points (
+                id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                map_id INTEGER NOT NULL REFERENCES maps(id),
+                label  TEXT NOT NULL,
+                x      REAL NOT NULL,
+                y      REAL NOT NULL
+            )
+        """)
+        self._db.commit()
 
     # ------------------------------------------------------------------
     # Subscriptions
@@ -83,7 +126,25 @@ class MapServer(Node):
             response.message = f"Failed to save occupancy grid: {e}"
             return response
 
-        # 2. Serialize SLAM Toolbox pose graph (for localization)
+        # 2. Upsert map row in the database
+        grid = self._latest_map
+        resolution = grid.info.resolution
+        origin_x = grid.info.origin.position.x
+        origin_y = grid.info.origin.position.y
+        self._db.execute(
+            """
+            INSERT INTO maps (name, resolution, origin_x, origin_y)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                resolution = excluded.resolution,
+                origin_x   = excluded.origin_x,
+                origin_y   = excluded.origin_y
+            """,
+            (name, resolution, origin_x, origin_y),
+        )
+        self._db.commit()
+
+        # 3. Serialize SLAM Toolbox pose graph (for localization)
         if self._serialize_client.wait_for_service(timeout_sec=2.0):
             req = SerializePoseGraph.Request()
             req.filename = map_path
@@ -113,6 +174,111 @@ class MapServer(Node):
             if f.suffix == ".yaml" and f.stem not in seen:
                 seen.add(f.stem)
         response.map_names = sorted(seen)
+        return response
+
+    # ------------------------------------------------------------------
+    # save_point service
+    # ------------------------------------------------------------------
+    def _save_point_cb(self, request: SavePoint.Request, response: SavePoint.Response):
+        map_name = request.map_name.strip()
+        label = request.label.strip()
+
+        if not map_name:
+            response.success = False
+            response.message = "map_name must not be empty"
+            return response
+        if not label:
+            response.success = False
+            response.message = "label must not be empty"
+            return response
+
+        row = self._db.execute(
+            "SELECT id FROM maps WHERE name = ?", (map_name,)
+        ).fetchone()
+        if row is None:
+            response.success = False
+            response.message = f"Map '{map_name}' not found — save the map first"
+            return response
+
+        map_id = row[0]
+        self._db.execute(
+            "INSERT INTO points (map_id, label, x, y) VALUES (?, ?, ?, ?)",
+            (map_id, label, request.x, request.y),
+        )
+        self._db.commit()
+
+        response.success = True
+        response.message = f"Point '{label}' saved on map '{map_name}' at ({request.x}, {request.y})"
+        self.get_logger().info(response.message)
+        return response
+
+    # ------------------------------------------------------------------
+    # get_map_points service
+    # ------------------------------------------------------------------
+    def _get_map_points_cb(
+        self, request: GetMapPoints.Request, response: GetMapPoints.Response
+    ):
+        map_name = request.map_name.strip()
+        if not map_name:
+            response.success = False
+            response.message = "map_name must not be empty"
+            return response
+
+        row = self._db.execute(
+            "SELECT id FROM maps WHERE name = ?", (map_name,)
+        ).fetchone()
+        if row is None:
+            response.success = False
+            response.message = f"Map '{map_name}' not found"
+            return response
+
+        rows = self._db.execute(
+            "SELECT label, x, y FROM points WHERE map_id = ? ORDER BY id",
+            (row[0],),
+        ).fetchall()
+
+        response.success = True
+        response.message = f"Found {len(rows)} point(s) for map '{map_name}'"
+        response.labels = [r[0] for r in rows]
+        response.x = [r[1] for r in rows]
+        response.y = [r[2] for r in rows]
+        return response
+
+    # ------------------------------------------------------------------
+    # get_map_with_points service
+    # ------------------------------------------------------------------
+    def _get_map_with_points_cb(
+        self, request: GetMapWithPoints.Request, response: GetMapWithPoints.Response
+    ):
+        map_name = request.map_name.strip()
+        if not map_name:
+            response.success = False
+            response.message = "map_name must not be empty"
+            return response
+
+        map_row = self._db.execute(
+            "SELECT id, resolution, origin_x, origin_y FROM maps WHERE name = ?",
+            (map_name,),
+        ).fetchone()
+        if map_row is None:
+            response.success = False
+            response.message = f"Map '{map_name}' not found"
+            return response
+
+        map_id, resolution, origin_x, origin_y = map_row
+        point_rows = self._db.execute(
+            "SELECT label, x, y FROM points WHERE map_id = ? ORDER BY id",
+            (map_id,),
+        ).fetchall()
+
+        response.success = True
+        response.message = f"Map '{map_name}' with {len(point_rows)} point(s)"
+        response.resolution = resolution
+        response.origin_x = origin_x
+        response.origin_y = origin_y
+        response.labels = [r[0] for r in point_rows]
+        response.x = [r[1] for r in point_rows]
+        response.y = [r[2] for r in point_rows]
         return response
 
     # ------------------------------------------------------------------

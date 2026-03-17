@@ -1,0 +1,10 @@
+string map_name
+---
+bool success
+string message
+float64 resolution
+float64 origin_x
+float64 origin_y
+string[] labels
+float64[] x
+float64[] y
