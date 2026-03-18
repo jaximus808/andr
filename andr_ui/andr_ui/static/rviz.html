@@ -311,6 +311,30 @@
     }
     #slam-map-select:focus { outline: none; border-color: #42a5f5; }
 
+    #btn-save-map {
+      width: 100%;
+      padding: 7px;
+      background: #0d47a1;
+      border: 1px solid #1565c0;
+      border-radius: 5px;
+      color: #90caf9;
+      font-size: 0.8rem;
+      cursor: pointer;
+      margin-bottom: 4px;
+    }
+    #btn-save-map:hover { background: #1565c0; color: #fff; }
+    #btn-save-map:disabled { background: #1a1a1a; color: #444; cursor: not-allowed; border-color: #333; }
+
+    #save-map-status {
+      font-size: 0.72rem;
+      color: #888;
+      min-height: 1.4em;
+      padding: 2px 0;
+      word-break: break-word;
+    }
+    #save-map-status.ok  { color: #66bb6a; }
+    #save-map-status.err { color: #ef5350; }
+
     #btn-apply-slam {
       width: 100%;
       padding: 7px;
@@ -424,6 +448,15 @@
         <input type="text" id="poi-map-name" placeholder="Map name" value="default" />
         <p style="font-size:0.72rem;color:#888;margin-bottom:6px;">Click on the map to place the point</p>
       </div>
+    </div>
+
+    <!-- Save Map -->
+    <div class="sp-section">
+      <h3>Save Map</h3>
+      <input type="text" id="save-map-name" placeholder="Map name (e.g. kitchen)"
+             style="width:100%;padding:6px 8px;background:#1a1a1a;border:1px solid #333;border-radius:5px;color:#e0e0e0;font-size:0.8rem;margin-bottom:8px;" />
+      <button id="btn-save-map">Save Current Map</button>
+      <div id="save-map-status"></div>
     </div>
 
     <!-- SLAM Config -->
@@ -1323,6 +1356,16 @@ function handleMessage(msg) {
       break;
     }
 
+    case 'save_map_result': {
+      btnSaveMap.disabled = false;
+      if (msg.success) {
+        setSaveMapMsg('Map saved: ' + (msg.message || ''), false);
+      } else {
+        setSaveMapMsg('Save failed: ' + (msg.message || '?'), true);
+      }
+      break;
+    }
+
     case 'map_list': {
       if (msg.maps) {
         console.log('Available maps:', msg.maps);
@@ -1385,6 +1428,31 @@ document.addEventListener('keydown', (e) => {
     case '-': document.getElementById('btn-zoom-out').click(); break;
     case 'p': case 'P': setTool(activeTool === 'poi' ? 'pan' : 'poi'); break;
     case 'Escape': setTool('pan'); break;
+  }
+});
+
+// ── Save Map UI ─────────────────────────────────────────────────────────────
+const saveMapNameInput = document.getElementById('save-map-name');
+const btnSaveMap       = document.getElementById('btn-save-map');
+const saveMapStatus    = document.getElementById('save-map-status');
+
+function setSaveMapMsg(msg, isErr) {
+  saveMapStatus.textContent = msg;
+  saveMapStatus.className = isErr ? 'err' : (msg ? 'ok' : '');
+}
+
+btnSaveMap.addEventListener('click', () => {
+  const mapName = saveMapNameInput.value.trim();
+  if (!mapName) {
+    setSaveMapMsg('Enter a map name.', true);
+    return;
+  }
+
+  btnSaveMap.disabled = true;
+  setSaveMapMsg('Saving map…', false);
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'save_map', map_name: mapName }));
   }
 });
 

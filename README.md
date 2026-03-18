@@ -41,6 +41,14 @@ sudo apt install ros-humble-behaviortree-cpp-v3
 
 # yaml-cpp
 sudo apt install libyaml-cpp-dev
+
+# Nav2 (navigation stack)
+sudo apt install ros-humble-nav2-bringup ros-humble-nav2-bt-navigator \
+  ros-humble-nav2-controller ros-humble-nav2-planner ros-humble-nav2-behaviors \
+  ros-humble-nav2-waypoint-follower ros-humble-nav2-velocity-smoother \
+  ros-humble-nav2-smoother ros-humble-nav2-lifecycle-manager \
+  ros-humble-nav2-navfn-planner ros-humble-nav2-regulated-pure-pursuit-controller \
+  ros-humble-nav2-costmap-2d
 ```
 
 ### Python dependencies

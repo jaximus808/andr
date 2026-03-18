@@ -7,7 +7,8 @@ Endpoints
   GET  /rviz              Serves rviz.html (2D map visualization)
   GET  /static/*          Static assets
   WS   /ws                WebSocket — bidirectional:
-                            browser → server: {"type": "prompt", "text": "...", "context": "..."}
+                            browser → server: {"type": "save_map", "map_name": "..."}
+                                              {"type": "prompt", "text": "...", "context": "..."}
                                               {"type": "save_point", "map_name": "...", "label": "...", "x": ..., "y": ...}
                                               {"type": "get_points", "map_name": "..."}
                                               {"type": "get_maps"}
@@ -146,6 +147,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     _bridge.send_task(text, context)
                     # Echo back so the sender sees their own message in the log
                     await _broadcast({"type": "user_prompt", "text": text})
+
+            elif msg_type == "save_map":
+                if _bridge is not None:
+                    _bridge.save_map(
+                        map_name=str(msg.get("map_name", "")),
+                    )
 
             elif msg_type == "save_point":
                 if _bridge is not None:

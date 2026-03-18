@@ -10,6 +10,9 @@ slam_toolbox:
 
     # map_file_name is set via launch argument (without extension)
 
+    # Start at the pose where mapping originally began
+    map_start_at_dock: true
+
     # Processing
     resolution: 0.05
     max_laser_range: 12.0

@@ -16,6 +16,8 @@ import sqlite3
 import subprocess
 import time
 
+import yaml
+
 _MIGRATIONS_DIR = pathlib.Path(__file__).parent / "migrations"
 
 import numpy as np
@@ -23,6 +25,8 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 from slam_toolbox.srv import SerializePoseGraph
+from gazebo_msgs.srv import SetEntityState
+from nav2_msgs.srv import ManageLifecycleNodes
 
 from andr.srv import (
     SaveMap, GetMaps, SavePoint, GetMapPoints, GetMapWithPoints,
@@ -57,6 +61,16 @@ class MapServer(Node):
         # Client for slam_toolbox serialization
         self._serialize_client = self.create_client(
             SerializePoseGraph, "/slam_toolbox/serialize_map"
+        )
+
+        # Client for Gazebo entity state (robot pose reset)
+        self._set_entity_client = self.create_client(
+            SetEntityState, "/set_entity_state"
+        )
+
+        # Client for Nav2 lifecycle manager (restart after SLAM restart)
+        self._nav2_lifecycle_client = self.create_client(
+            ManageLifecycleNodes, "/lifecycle_manager_navigation/manage_nodes"
         )
 
         # Services
@@ -437,6 +451,10 @@ class MapServer(Node):
         map_name = row_map[0] if row_map else ""
         localization = (row_loc[0] == "true") if row_loc else False
 
+        # Reset robot pose to origin in Gazebo before restarting SLAM
+        if localization:
+            self._reset_robot_pose()
+
         # Kill existing slam_toolbox processes
         try:
             subprocess.run(
@@ -447,36 +465,138 @@ class MapServer(Node):
         except Exception as e:
             self.get_logger().warn(f"pkill failed: {e}")
 
-        # Determine params file
+        # Determine params file and build command
         if localization and map_name:
             params_file = self.get_parameter("slam_params_localization").value
             map_file = os.path.join(self._maps_dir, map_name)
             executable = "localization_slam_toolbox_node"
-            extra_params = ["-p", f"map_file_name:={map_file}"]
+
+            # Check that posegraph files exist
+            pg_file = map_file + ".posegraph"
+            data_file = map_file + ".data"
+            if not os.path.isfile(pg_file) or not os.path.isfile(data_file):
+                response.success = False
+                response.message = (
+                    f"Posegraph files not found for map '{map_name}' "
+                    f"(looked for {pg_file} and {data_file}). "
+                    f"Was the map saved with SLAM Toolbox running?"
+                )
+                self.get_logger().error(response.message)
+                return response
+
+            # Write a merged params file that includes map_file_name
+            # (matching how robot.launch.py passes it as a node parameter)
+            with open(params_file, "r") as f:
+                params_data = yaml.safe_load(f)
+
+            params_data.setdefault("slam_toolbox", {}).setdefault("ros__parameters", {})
+            params_data["slam_toolbox"]["ros__parameters"]["map_file_name"] = map_file
+
+            merged_params_path = os.path.join(self._maps_dir, "_slam_localization_params.yaml")
+            with open(merged_params_path, "w") as f:
+                yaml.dump(params_data, f, default_flow_style=False)
+
+            self.get_logger().info(
+                f"Wrote merged params with map_file_name='{map_file}' to {merged_params_path}"
+            )
+            params_file = merged_params_path
         else:
             params_file = self.get_parameter("slam_params_mapping").value
             executable = "async_slam_toolbox_node"
-            extra_params = []
 
         cmd = [
             "ros2", "run", "slam_toolbox", executable,
             "--ros-args", "--params-file", params_file,
-        ] + extra_params
+        ]
 
         try:
             proc = subprocess.Popen(cmd, start_new_session=True)
-            response.success = True
-            response.message = (
+            self.get_logger().info(
                 f"SLAM restarted as '{executable}' (PID {proc.pid}), "
                 f"map='{map_name}', mode={'localization' if localization else 'mapping'}"
             )
-            self.get_logger().info(response.message)
         except Exception as e:
             response.success = False
             response.message = f"Failed to restart SLAM: {e}"
             self.get_logger().error(response.message)
+            return response
 
+        # Give SLAM time to publish /map before restarting Nav2
+        time.sleep(3.0)
+        self._restart_nav2()
+
+        response.success = True
+        response.message = (
+            f"SLAM restarted as '{executable}' (PID {proc.pid}), "
+            f"map='{map_name}', mode={'localization' if localization else 'mapping'}"
+        )
         return response
+
+    # ------------------------------------------------------------------
+    # Nav2 lifecycle restart
+    # ------------------------------------------------------------------
+    def _restart_nav2(self):
+        """Reset and restart Nav2 lifecycle nodes so they pick up the new map."""
+        if not self._nav2_lifecycle_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().warn(
+                "Nav2 lifecycle manager not available — skipping Nav2 restart"
+            )
+            return
+
+        # RESET (3) brings all nodes back to unconfigured
+        reset_req = ManageLifecycleNodes.Request()
+        reset_req.command = ManageLifecycleNodes.Request.RESET
+        self.get_logger().info("Resetting Nav2 lifecycle nodes...")
+        reset_future = self._nav2_lifecycle_client.call_async(reset_req)
+        rclpy.spin_until_future_complete(self, reset_future, timeout_sec=15.0)
+        if reset_future.result() is not None:
+            self.get_logger().info(f"Nav2 reset: success={reset_future.result().success}")
+        else:
+            self.get_logger().warn("Nav2 reset timed out")
+
+        time.sleep(1.0)
+
+        # STARTUP (0) configures and activates all nodes
+        startup_req = ManageLifecycleNodes.Request()
+        startup_req.command = ManageLifecycleNodes.Request.STARTUP
+        self.get_logger().info("Starting up Nav2 lifecycle nodes...")
+        startup_future = self._nav2_lifecycle_client.call_async(startup_req)
+        rclpy.spin_until_future_complete(self, startup_future, timeout_sec=30.0)
+        if startup_future.result() is not None:
+            self.get_logger().info(f"Nav2 startup: success={startup_future.result().success}")
+        else:
+            self.get_logger().warn("Nav2 startup timed out")
+
+    # ------------------------------------------------------------------
+    # Gazebo robot pose reset
+    # ------------------------------------------------------------------
+    def _reset_robot_pose(self):
+        """Reset the robot to (0, 0, 0) in Gazebo via /set_entity_state."""
+        if not self._set_entity_client.wait_for_service(timeout_sec=3.0):
+            self.get_logger().warn(
+                "/set_entity_state service not available — skipping pose reset"
+            )
+            return
+
+        from gazebo_msgs.msg import EntityState
+        from geometry_msgs.msg import Pose, Twist, Point, Quaternion
+
+        req = SetEntityState.Request()
+        req.state = EntityState()
+        req.state.name = "andr"
+        req.state.pose = Pose(
+            position=Point(x=0.0, y=0.0, z=0.1),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        )
+        req.state.twist = Twist()  # zero velocity
+
+        future = self._set_entity_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+
+        if future.result() is not None and future.result().success:
+            self.get_logger().info("Robot pose reset to (0, 0, 0) in Gazebo")
+        else:
+            self.get_logger().warn("Failed to reset robot pose in Gazebo")
 
     # ------------------------------------------------------------------
     # Package path helpers

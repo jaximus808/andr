@@ -22,3 +22,7 @@ skills:
   navigate_to_point:
     action_server: /skills/navigate_to_point
     description: "Navigate to a named point on a saved map using Nav2"
+
+  go_to_point:
+    action_server: /skills/go_to_point
+    description: "Navigate to a named point using the currently loaded map"

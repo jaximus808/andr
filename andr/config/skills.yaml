@@ -50,6 +50,25 @@ skills:
     category: navigation
     tags: [nav2, point, map, navigate]
 
+  # ── Navigation — go to point (auto-detects current map) ──────────────────
+  - name: go_to_point
+    description: >
+      Navigate the robot to a named point on the currently loaded map.
+      Automatically determines which map is active from the SLAM config,
+      looks up the point's (x, y) coordinates, and sends a Nav2 goal.
+      Use this when the user says "go to kitchen" or "navigate to desk"
+      without specifying a map name.
+    parameters:
+      - name: point_name
+        type: string
+        required: true
+        description: >
+          Name of the destination point as it was saved on the map
+          (e.g. "kitchen", "desk", "charging_dock", "front_door").
+    returns: json
+    category: navigation
+    tags: [nav2, point, map, navigate]
+
   # ── Navigation — landmark-based ───────────────────────────────────────────
   - name: move_to_landmark
     description: >

@@ -22,11 +22,9 @@ bt_navigator:
     odom_topic: /odom
     bt_loop_duration: 10
     default_server_timeout: 20
-    # Behavior tree xmls bundled with nav2_bt_navigator
-    navigate_to_pose:
-      default_bt_xml_filename: "navigate_to_pose_w_replanning_and_recovery.xml"
-    navigate_through_poses:
-      default_bt_xml_filename: "navigate_through_poses_w_replanning_and_recovery.xml"
+    # Behavior tree xmls bundled with nav2_bt_navigator (Humble flat params)
+    default_nav_to_pose_bt_xml: "/opt/ros/humble/share/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
+    default_nav_through_poses_bt_xml: "/opt/ros/humble/share/nav2_bt_navigator/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_compute_path_through_poses_action_bt_node
@@ -55,13 +53,10 @@ bt_navigator:
       - nav2_round_robin_node_bt_node
       - nav2_transform_available_condition_bt_node
       - nav2_time_expired_condition_bt_node
-      - nav2_path_expiring_timer_condition_bt_node
       - nav2_distance_traveled_condition_bt_node
       - nav2_single_trigger_bt_node
       - nav2_goal_checker_selector_bt_node
       - nav2_controller_selector_bt_node
-      - nav2_speed_limit_action_bt_node
-      - nav2_stopped_condition_bt_node
 
 # ── Controller Server (local planner) ────────────────────────────────────────
 controller_server:

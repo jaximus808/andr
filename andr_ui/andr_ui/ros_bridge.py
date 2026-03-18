@@ -30,7 +30,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 
 from andr.msg import Prompt, RobotSpeech
 from andr.action import TaskGoal
-from andr.srv import SavePoint, GetMapPoints, GetMaps, SetSlamConfig, GetSlamConfig, RestartSlam
+from andr.srv import SaveMap, SavePoint, GetMapPoints, GetMaps, SetSlamConfig, GetSlamConfig, RestartSlam
 
 
 class RosBridgeNode(Node):
@@ -92,6 +92,7 @@ class RosBridgeNode(Node):
         self._prompt_pub = self.create_publisher(Prompt, "/ui/prompt", 10)
 
         # ── Service clients for map_manager ──────────────────────────────
+        self._save_map_client = self.create_client(SaveMap, "map_manager/save_map")
         self._save_point_client = self.create_client(SavePoint, "map_manager/save_point")
         self._get_points_client = self.create_client(GetMapPoints, "map_manager/get_map_points")
         self._get_maps_client = self.create_client(GetMaps, "map_manager/get_maps")
@@ -273,6 +274,35 @@ class RosBridgeNode(Node):
             "text": res.summary,
             "emotion": "satisfied" if res.success else "concerned",
         })
+
+    # ── Map saving ─────────────────────────────────────────────────────────
+
+    def save_map(self, map_name: str) -> None:
+        """Save the current SLAM map via map_manager service."""
+        if not self._save_map_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "save_map_result", "success": False,
+                         "message": "map_manager/save_map service not available"})
+            return
+
+        req = SaveMap.Request()
+        req.map_name = map_name
+
+        future = self._save_map_client.call_async(req)
+        future.add_done_callback(self._on_save_map_result)
+
+    def _on_save_map_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({
+                "type": "save_map_result",
+                "success": res.success,
+                "message": res.message,
+            })
+            # Refresh map list after successful save
+            if res.success:
+                self.get_maps()
+        except Exception as e:
+            self._push({"type": "save_map_result", "success": False, "message": str(e)})
 
     # ── Points of interest ───────────────────────────────────────────────
 

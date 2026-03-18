@@ -20,6 +20,7 @@ setup(
             "spin_server  = robot_skills.spin_server:main",
             "map_server                = robot_skills.map_server:main",
             "navigate_to_point_server  = robot_skills.navigate_to_point_server:main",
+            "go_to_point_server        = robot_skills.go_to_point_server:main",
         ],
     },
 )

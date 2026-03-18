@@ -248,6 +248,56 @@
       color: #555;
       font-style: italic;
     }
+
+    /* ── Map config section ─────────────────────────────────────────── */
+    .map-config-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .map-config-row label {
+      font-size: 0.75rem;
+      color: #999;
+      min-width: 50px;
+    }
+    .map-config-row select {
+      flex: 1;
+      background: #1c1c1c;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #e0e0e0;
+      padding: 5px 8px;
+      font-size: 0.78rem;
+      font-family: 'Consolas', 'Fira Code', monospace;
+      outline: none;
+    }
+    .map-config-row select:focus { border-color: #42a5f5; }
+
+    #load-map-btn {
+      width: 100%;
+      background: #1565c0;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 0;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+    #load-map-btn:hover  { background: #1976d2; }
+    #load-map-btn:active { background: #0d47a1; }
+    #load-map-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+    #slam-status-msg {
+      font-size: 0.72rem;
+      margin-top: 6px;
+      min-height: 16px;
+    }
+    #slam-status-msg.success { color: #81c784; }
+    #slam-status-msg.error   { color: #ef9a9a; }
+    #slam-status-msg.loading { color: #ffcc80; }
   </style>
 </head>
 <body>
@@ -293,6 +343,24 @@
   <div class="panel" id="panel-status">
     <div class="panel-header">System Status</div>
     <div id="status-content">
+      <div class="status-section">
+        <h3>Map / SLAM Config</h3>
+        <div class="map-config-row">
+          <label>Map</label>
+          <select id="map-select">
+            <option value="">-- loading --</option>
+          </select>
+        </div>
+        <div class="map-config-row">
+          <label>Mode</label>
+          <select id="slam-mode-select">
+            <option value="mapping">Mapping</option>
+            <option value="localization">Localization</option>
+          </select>
+        </div>
+        <button id="load-map-btn">Load Map</button>
+        <div id="slam-status-msg"></div>
+      </div>
       <div class="status-section">
         <h3>Nodes</h3>
         <div id="node-list"><span class="status-empty">Discovering...</span></div>
@@ -383,6 +451,7 @@
       statusLbl.textContent = 'connected';
       reconnectDelay = 1000;
       addLog('connected', 'WebSocket connected');
+      requestMaps();
     };
 
     ws.onclose = () => {
@@ -453,6 +522,54 @@
         addLog('robot_status', msg.text || '');
         break;
 
+      case 'map_list': {
+        mapSelect.innerHTML = '';
+        const maps = msg.maps || [];
+        if (maps.length === 0) {
+          mapSelect.innerHTML = '<option value="">-- no maps saved --</option>';
+        } else {
+          mapSelect.innerHTML = '<option value="">(none — new map)</option>';
+          for (const m of maps) {
+            const opt = document.createElement('option');
+            opt.value = m;
+            opt.textContent = m;
+            mapSelect.appendChild(opt);
+          }
+        }
+        break;
+      }
+
+      case 'slam_config': {
+        if (msg.success) {
+          if (msg.map_name) mapSelect.value = msg.map_name;
+          slamModeSelect.value = msg.localization ? 'localization' : 'mapping';
+        }
+        break;
+      }
+
+      case 'slam_config_result': {
+        if (msg.success) {
+          setSlamStatus('Restarting SLAM...', 'loading');
+          ws.send(JSON.stringify({ type: 'restart_slam' }));
+        } else {
+          setSlamStatus('Config error: ' + (msg.message || ''), 'error');
+          loadMapBtn.disabled = false;
+        }
+        break;
+      }
+
+      case 'restart_slam_result': {
+        loadMapBtn.disabled = false;
+        if (msg.success) {
+          setSlamStatus('SLAM restarted', 'success');
+          addLog('robot_status', 'SLAM restarted successfully');
+        } else {
+          setSlamStatus('Restart failed: ' + (msg.message || ''), 'error');
+          addLog('error', 'SLAM restart failed: ' + (msg.message || ''));
+        }
+        break;
+      }
+
       case 'node_status':
         renderNodeStatus(msg.nodes || [], msg.action_servers || []);
         break;
@@ -513,6 +630,48 @@
       e.preventDefault();
       sendPrompt();
     }
+  });
+
+  // ── Map / SLAM config ────────────────────────────────────────────────
+  const mapSelect      = document.getElementById('map-select');
+  const slamModeSelect = document.getElementById('slam-mode-select');
+  const loadMapBtn     = document.getElementById('load-map-btn');
+  const slamStatusMsg  = document.getElementById('slam-status-msg');
+
+  function setSlamStatus(text, cls) {
+    slamStatusMsg.textContent = text;
+    slamStatusMsg.className = cls || '';
+  }
+
+  function requestMaps() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'get_maps' }));
+      ws.send(JSON.stringify({ type: 'get_slam_config' }));
+    }
+  }
+
+  loadMapBtn.addEventListener('click', () => {
+    const mapName = mapSelect.value;
+    const localization = slamModeSelect.value === 'localization';
+
+    if (!mapName && localization) {
+      setSlamStatus('Select a map for localization mode', 'error');
+      return;
+    }
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setSlamStatus('Not connected', 'error');
+      return;
+    }
+
+    loadMapBtn.disabled = true;
+    setSlamStatus('Setting config...', 'loading');
+
+    ws.send(JSON.stringify({
+      type: 'set_slam_config',
+      map_name: mapName || '',
+      localization: localization,
+    }));
   });
 
   // ── Boot ─────────────────────────────────────────────────────────────
