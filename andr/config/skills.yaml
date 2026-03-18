@@ -25,6 +25,31 @@ skills:
     category: perception
     tags: [camera, vision, detection]
 
+  # ── Navigation — point-based (map database) ───────────────────────────────
+  - name: navigate_to_point
+    description: >
+      Navigate the robot to a named point stored on a saved map.
+      Looks up the point's (x, y) coordinates from the map database,
+      then sends a NavigateToPose goal to Nav2. Reports live progress
+      (distance remaining) while the robot is moving. Use this when
+      you want to move the robot to a specific, previously saved location
+      such as "desk", "charger", or "door".
+    parameters:
+      - name: point_name
+        type: string
+        required: true
+        description: >
+          Name of the destination point as it was saved on the map
+          (e.g. "desk", "charging_dock", "front_door").
+      - name: map_name
+        type: string
+        required: true
+        description: >
+          Name of the map the point belongs to (e.g. "office", "home").
+    returns: json
+    category: navigation
+    tags: [nav2, point, map, navigate]
+
   # ── Navigation — landmark-based ───────────────────────────────────────────
   - name: move_to_landmark
     description: >

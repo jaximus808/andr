@@ -223,6 +223,15 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(LaunchConfiguration("launch_skills")),
     )
 
+    navigate_to_point_server_node = Node(
+        package="robot_skills",
+        executable="navigate_to_point_server",
+        name="navigate_to_point_server",
+        output="screen",
+        emulate_tty=True,
+        condition=IfCondition(LaunchConfiguration("launch_skills")),
+    )
+
     startup_msg = LogInfo(msg=[
         "\n",
         "======================================================\n",
@@ -243,4 +252,5 @@ def generate_launch_description() -> LaunchDescription:
         *args, startup_msg,
         brain_node, agent_node_action, task_manager_node, ui_process,
         skill_executor_node, speak_server_node, walk_server_node, spin_server_node,
+        navigate_to_point_server_node,
     ])

@@ -18,3 +18,7 @@ skills:
   spin:
     action_server: /skills/spin
     description: "Rotate the robot in place for a given duration"
+
+  navigate_to_point:
+    action_server: /skills/navigate_to_point
+    description: "Navigate to a named point on a saved map using Nav2"

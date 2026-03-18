@@ -251,6 +251,50 @@ def _handle_animate(args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# navigate_to_point — Nav2 point navigation mock
+# ---------------------------------------------------------------------------
+
+def _handle_navigate_to_point(args: dict) -> dict:
+    point_name = args.get("point_name", "").strip()
+    map_name = args.get("map_name", "").strip()
+
+    if not point_name:
+        return {"success": False, "error_message": "point_name is required."}
+    if not map_name:
+        return {"success": False, "error_message": "map_name is required."}
+
+    # Simulate map service lookup + short travel delay
+    time.sleep(0.2)
+
+    # Small chance of failure (point not found)
+    if random.random() < 0.05:
+        return {
+            "success": False,
+            "point_name": point_name,
+            "map_name": map_name,
+            "error_message": (
+                f"[MOCK] Point '{point_name}' not found on map '{map_name}'."
+            ),
+        }
+
+    # Simulate nav2 travel with random distance
+    travel_s = random.uniform(3, 10)
+    time.sleep(min(travel_s * 0.05, 0.5))  # compressed
+
+    x = round(random.uniform(-5.0, 5.0), 2)
+    y = round(random.uniform(-5.0, 5.0), 2)
+
+    return {
+        "success": True,
+        "point_name": point_name,
+        "map_name": map_name,
+        "final_position": {"x": x, "y": y},
+        "nav_status": "ARRIVED",
+        "note": "[MOCK] Nav2 offline — simulated arrival at named point.",
+    }
+
+
+# ---------------------------------------------------------------------------
 # spin — rotate in place mock
 # ---------------------------------------------------------------------------
 
@@ -282,12 +326,13 @@ def _handle_spin(args: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 _HANDLERS: dict[str, Any] = {
-    "see":               _handle_see,
-    "move_to_landmark":  _handle_move_to_landmark,
-    "move_sequence":     _handle_move_sequence,
-    "speak":             _handle_speak,
-    "animate":           _handle_animate,
-    "spin":              _handle_spin,
+    "see":                 _handle_see,
+    "move_to_landmark":    _handle_move_to_landmark,
+    "move_sequence":       _handle_move_sequence,
+    "speak":               _handle_speak,
+    "animate":             _handle_animate,
+    "spin":                _handle_spin,
+    "navigate_to_point":   _handle_navigate_to_point,
 }
 
 
