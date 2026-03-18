@@ -26,7 +26,7 @@ from slam_toolbox.srv import SerializePoseGraph
 
 from andr.srv import (
     SaveMap, GetMaps, SavePoint, GetMapPoints, GetMapWithPoints,
-    SetSlamConfig, GetSlamConfig, RestartSlam,
+    SetSlamConfig, GetSlamConfig, RestartSlam, GetPointCoordinates,
 )
 
 DEFAULT_MAPS_DIR = os.path.expanduser("~/andr_maps")
@@ -83,6 +83,11 @@ class MapServer(Node):
         )
         self._restart_slam_srv = self.create_service(
             RestartSlam, "map_manager/restart_slam", self._restart_slam_cb
+        )
+        self._get_point_coords_srv = self.create_service(
+            GetPointCoordinates,
+            "map_manager/get_point_coordinates",
+            self._get_point_coordinates_cb,
         )
 
         # Parameters for SLAM restart
@@ -234,7 +239,12 @@ class MapServer(Node):
 
         map_id = row[0]
         self._db.execute(
-            "INSERT INTO points (map_id, label, x, y) VALUES (?, ?, ?, ?)",
+            """
+            INSERT INTO points (map_id, label, x, y) VALUES (?, ?, ?, ?)
+            ON CONFLICT(map_id, label) DO UPDATE SET
+                x = excluded.x,
+                y = excluded.y
+            """,
             (map_id, label, request.x, request.y),
         )
         self._db.commit()
@@ -311,6 +321,51 @@ class MapServer(Node):
         response.labels = [r[0] for r in point_rows]
         response.x = [r[1] for r in point_rows]
         response.y = [r[2] for r in point_rows]
+        return response
+
+    # ------------------------------------------------------------------
+    # get_point_coordinates service
+    # ------------------------------------------------------------------
+    def _get_point_coordinates_cb(
+        self,
+        request: GetPointCoordinates.Request,
+        response: GetPointCoordinates.Response,
+    ):
+        map_name = request.map_name.strip()
+        point_name = request.point_name.strip()
+
+        if not map_name:
+            response.success = False
+            response.message = "map_name must not be empty"
+            return response
+        if not point_name:
+            response.success = False
+            response.message = "point_name must not be empty"
+            return response
+
+        row = self._db.execute(
+            """
+            SELECT p.x, p.y
+            FROM points p
+            JOIN maps m ON p.map_id = m.id
+            WHERE m.name = ? AND p.label = ?
+            """,
+            (map_name, point_name),
+        ).fetchone()
+
+        if row is None:
+            response.success = False
+            response.message = (
+                f"Point '{point_name}' not found on map '{map_name}'"
+            )
+            return response
+
+        response.success = True
+        response.x = row[0]
+        response.y = row[1]
+        response.message = (
+            f"Point '{point_name}' on map '{map_name}' at ({row[0]}, {row[1]})"
+        )
         return response
 
     # ------------------------------------------------------------------

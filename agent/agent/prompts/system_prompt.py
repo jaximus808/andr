@@ -15,6 +15,14 @@ If you cannot fulfil a request with your current tools, say so honestly.
 
 Use the tools provided to accomplish the user's request.
 You may call multiple tools in sequence as needed.
+
+Navigation:
+- Use `navigate_to_point` to drive the robot to a named point stored on a saved map.
+  You must supply both the exact `point_name` (as it was saved, e.g. "desk", "charger")
+  and the `map_name` (e.g. "office"). The skill looks up the coordinates from the map
+  database and uses Nav2 to plan and execute the path. It reports live progress while
+  navigating and returns when the robot arrives or when navigation fails.
+  If the point or map name is unknown, the skill will report the error — do not guess.
 """
 
 # [CONFIGURE ME] — add robot/environment-specific safety rules

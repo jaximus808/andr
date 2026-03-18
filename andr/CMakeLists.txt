@@ -33,6 +33,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/SetSlamConfig.srv"
     "srv/GetSlamConfig.srv"
     "srv/RestartSlam.srv"
+    "srv/GetPointCoordinates.srv"
     "action/Wander.action"
     "action/Agent.action"
     "action/ExecuteSkill.action"

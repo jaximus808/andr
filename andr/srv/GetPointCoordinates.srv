@@ -1,0 +1,7 @@
+string map_name
+string point_name
+---
+bool success
+float64 x
+float64 y
+string message
