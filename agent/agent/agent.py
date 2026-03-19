@@ -42,7 +42,7 @@ def _create_langchain_llm(backend: str, model: str, host: str, temperature: floa
     """Instantiate the appropriate LangChain chat model."""
     if backend == "ollama":
         from langchain_ollama import ChatOllama
-        kwargs = {"temperature": temperature, "num_ctx": 4096, "keep_alive": "10m"}
+        kwargs = {"temperature": temperature, "num_ctx": 2048, "keep_alive": "10m"}
         if model:
             kwargs["model"] = model
         kwargs["base_url"] = host
@@ -106,6 +106,8 @@ class AgentServer(Node):
         self._skill_executor = SkillExecutor(self._skills, self)
 
     def _setup_langchain(self) -> None:
+        from langgraph.prebuilt import create_react_agent
+
         backend     = self._str("llm_backend")
         model       = self._str("llm_model")
         host        = self._str("llm_host")
@@ -124,6 +126,14 @@ class AgentServer(Node):
             memory_top_k=self._memory_top_k,
         )
         self.get_logger().info(f"LangChain tools: {[t.name for t in self._tools]}")
+
+        # Cache the ReAct agent graph so it's not recreated per goal
+        self._agent = create_react_agent(
+            self._llm,
+            self._tools,
+            prompt=DEFAULT_SYSTEM_PROMPT,
+        )
+        self.get_logger().info("ReAct agent graph cached for reuse.")
 
     def _setup_action_server(self) -> None:
         self._cb_group = ReentrantCallbackGroup()
@@ -158,8 +168,7 @@ class AgentServer(Node):
     # ------------------------------------------------------------------
 
     def _execute_cb(self, goal_handle) -> Agent.Result:
-        """Build a LangChain agent and invoke it for this goal."""
-        from langgraph.prebuilt import create_react_agent
+        """Invoke the cached LangChain agent for this goal."""
         from langchain_core.messages import HumanMessage
 
         goal: Agent.Goal = goal_handle.request
@@ -168,10 +177,10 @@ class AgentServer(Node):
 
         self.get_logger().info(f"Starting LangChain agent — prompt: '{goal.prompt[:80]}'")
 
-        # Build the system prompt
-        system_message = DEFAULT_SYSTEM_PROMPT
+        # If runtime context is provided, prepend it to the user prompt
+        user_content = goal.prompt
         if goal.context:
-            system_message += f"\n\n=== RUNTIME CONTEXT ===\n{goal.context}"
+            user_content = f"[RUNTIME CONTEXT: {goal.context}]\n\n{goal.prompt}"
 
         # Send initial feedback
         self._send_feedback(goal_handle, 1, "thinking", "Invoking LangChain agent…", 0.1)
@@ -180,21 +189,14 @@ class AgentServer(Node):
             import time as _time
             from langchain_core.messages import AIMessage, ToolMessage
 
-            # Create a react agent graph per-goal
-            agent = create_react_agent(
-                self._llm,
-                self._tools,
-                prompt=system_message,
-            )
-
             # Stream through the ReAct loop so we can log each step
             self.get_logger().info("Sending prompt to LLM — waiting for response…")
             t0 = _time.monotonic()
             step = 0
             response = None
 
-            for event in agent.stream(
-                {"messages": [HumanMessage(content=goal.prompt)]},
+            for event in self._agent.stream(
+                {"messages": [HumanMessage(content=user_content)]},
                 config={"recursion_limit": max_iter},
                 stream_mode="updates",
             ):

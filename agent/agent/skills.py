@@ -156,9 +156,6 @@ class SkillExecutor:
     """
     Dispatches skill calls to the ``/skill_executor`` ROS 2 node via ExecuteSkill actions.
 
-    Falls back to mock results if the action client cannot be created or the node
-    is not running.
-
     Parameters
     ----------
     registry:
@@ -199,7 +196,7 @@ class SkillExecutor:
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "SkillExecutor: could not create action client (%s). "
-                "All skill calls will return mock results.",
+                "All skill calls will fail until the action server is available.",
                 exc,
             )
             self._action_client = None
@@ -234,9 +231,11 @@ class SkillExecutor:
             logger.warning("SkillExecutor: %s", err)
             return f"ERROR: {err}"
 
-        # --- Action client unavailable → mock ---
+        # --- Action client unavailable → error ---
         if self._action_client is None:
-            return self._mock_result(skill_name, args)
+            err = "skill_executor action client is not available."
+            logger.error("SkillExecutor: %s", err)
+            return f"ERROR: {err}"
 
         # --- Send goal to skill_executor node ---
         return self._send_goal(skill_name, args)
@@ -292,11 +291,3 @@ class SkillExecutor:
         )
         return res.result_json
 
-    # ------------------------------------------------------------------
-    # Mock fallback
-    # ------------------------------------------------------------------
-
-    def _mock_result(self, skill_name: str, args: dict) -> str:
-        """Route to per-skill mock handler when skill_executor node is unavailable."""
-        from .mock_skills import dispatch  # noqa: PLC0415
-        return dispatch(skill_name, args)

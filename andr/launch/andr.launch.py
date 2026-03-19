@@ -30,7 +30,7 @@ ui_port             string  8080        Port for the andr_ui web server.
 log_level           string  info        ROS log level (debug/info/warn/error).
 
 llm_backend         string  ollama      LLM backend: ollama | openai
-llm_model           string  llama3.2    Model name (e.g. llama3.2, qwen2.5, gpt-4o).
+llm_model           string  qwen2.5:1.5b  Model name (e.g. qwen2.5:1.5b, llama3.2, gpt-4o).
 llm_host            string  http://localhost:11434
 llm_temperature     double  0.2
 
@@ -136,8 +136,8 @@ def generate_launch_description() -> LaunchDescription:
         # ── LLM ───────────────────────────────────────────────────────
         DeclareLaunchArgument("llm_backend",     default_value="ollama",
                               description="ollama | openai"),
-        DeclareLaunchArgument("llm_model",       default_value="llama3.2",
-                              description="Model name (e.g. llama3.2, qwen2.5, gpt-4o)"),
+        DeclareLaunchArgument("llm_model",       default_value="qwen2.5:1.5b",
+                              description="Model name (e.g. qwen2.5:1.5b, llama3.2, gpt-4o)"),
         DeclareLaunchArgument("llm_host",        default_value="http://localhost:11434"),
         DeclareLaunchArgument("llm_temperature", default_value="0.2"),
 
