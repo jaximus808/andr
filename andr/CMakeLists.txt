@@ -37,6 +37,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/RegisterTool.srv"
     "srv/DeregisterTool.srv"
     "srv/ListTools.srv"
+    "srv/GetAgentConfig.srv"
+    "srv/SetAgentConfig.srv"
     "action/Wander.action"
     "action/Agent.action"
     "action/ExecuteSkill.action"
@@ -104,10 +106,6 @@ install(FILES
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(FILES
-  config/skills.yaml
-  DESTINATION share/${PROJECT_NAME}
-)
 install(DIRECTORY include/
   DESTINATION include
 )

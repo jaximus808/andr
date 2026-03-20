@@ -36,8 +36,6 @@ llm_temperature     double  0.2
 
 memory_backend      string  chroma      RAG backend: chroma
 memory_top_k        int     4
-
-skills_yaml         string  <installed share path>
 max_iterations      int     20
 """
 
@@ -61,15 +59,6 @@ def _agent_node(context, *args, **kwargs) -> list:
     def cfg(name: str):
         return LaunchConfiguration(name).perform(context)
 
-    # skills_yaml: prefer the explicit arg, fall back to the installed share path
-    skills_yaml = cfg("skills_yaml")
-    if not skills_yaml:
-        from ament_index_python.packages import get_package_share_directory
-        import os
-        skills_yaml = os.path.join(
-            get_package_share_directory("andr"), "skills.yaml"
-        )
-
     node = Node(
         package="agent",
         executable="agent_server",
@@ -82,7 +71,6 @@ def _agent_node(context, *args, **kwargs) -> list:
             "llm_model":         cfg("llm_model"),
             "llm_host":          cfg("llm_host"),
             "llm_temperature":   float(cfg("llm_temperature")),
-            "skills_yaml":       skills_yaml,
             "memory_backend":    cfg("memory_backend"),
             "memory_top_k":      int(cfg("memory_top_k")),
             "max_iterations":    int(cfg("max_iterations")),
@@ -137,10 +125,6 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("memory_backend",    default_value="chroma",
                               description="chroma"),
         DeclareLaunchArgument("memory_top_k",      default_value="4"),
-
-        # ── Skills ────────────────────────────────────────────────────
-        DeclareLaunchArgument("skills_yaml", default_value="",
-                              description="Path to skills.yaml (default: installed share)"),
 
         # ── Loop tuning ───────────────────────────────────────────────
         DeclareLaunchArgument("max_iterations",  default_value="20"),

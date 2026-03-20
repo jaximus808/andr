@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Optional
 
 
@@ -82,29 +81,6 @@ class SkillsRegistry:
     # ------------------------------------------------------------------
     # Construction helpers
     # ------------------------------------------------------------------
-
-    @classmethod
-    def from_yaml(cls, path: str | Path) -> "SkillsRegistry":
-        """Load a registry from a YAML file."""
-        try:
-            import yaml  # noqa: PLC0415
-        except ImportError as exc:
-            raise ImportError(
-                "PyYAML is required to load skills.  Install with: pip install pyyaml"
-            ) from exc
-
-        path = Path(path)
-        if not path.exists():
-            logger.warning("Skills YAML not found at '%s'; using empty registry.", path)
-            return cls()
-
-        with path.open() as fh:
-            data: dict = yaml.safe_load(fh) or {}
-
-        raw_skills: list[dict] = data.get("skills", [])
-        skills = [Skill.from_dict(s) for s in raw_skills if isinstance(s, dict)]
-        logger.info("Loaded %d skill(s) from '%s'.", len(skills), path)
-        return cls(skills)
 
     @classmethod
     def from_dict_list(cls, raw: list[dict]) -> "SkillsRegistry":

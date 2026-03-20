@@ -15,6 +15,8 @@ Endpoints
                                               {"type": "set_slam_config", "map_name": "...", "localization": bool}
                                               {"type": "get_slam_config"}
                                               {"type": "restart_slam"}
+                                              {"type": "get_agent_config"}
+                                              {"type": "set_agent_config", "config": {...}}
                             server → browser: event dicts from ROS topics
 
 Run
@@ -187,6 +189,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             elif msg_type == "restart_slam":
                 if _bridge is not None:
                     _bridge.restart_slam()
+
+            elif msg_type == "get_agent_config":
+                if _bridge is not None:
+                    _bridge.get_agent_config()
+
+            elif msg_type == "set_agent_config":
+                if _bridge is not None:
+                    _bridge.set_agent_config(msg.get("config", {}))
 
     except WebSocketDisconnect:
         _clients.discard(ws)
