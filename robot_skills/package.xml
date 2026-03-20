@@ -11,6 +11,7 @@
 
   <depend>rclpy</depend>
   <depend>andr</depend>
+  <depend>andr_tools</depend>
   <depend>nav_msgs</depend>
   <depend>slam_toolbox</depend>
 

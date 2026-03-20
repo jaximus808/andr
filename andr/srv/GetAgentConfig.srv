@@ -1,0 +1,8 @@
+---
+string llm_backend
+string llm_model
+string llm_host
+float64 llm_temperature
+int32 max_iterations
+string memory_backend
+int32 memory_top_k

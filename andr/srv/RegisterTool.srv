@@ -1,0 +1,9 @@
+string tool_name              # unique tool identifier (e.g. "speak")
+string description            # human-readable description
+string action_server          # full action server path (e.g. /tools/speak)
+string parameters_json        # JSON array: [{"name","type","required","description"}, ...]
+string category               # e.g. "communication", "navigation"
+string[] tags                 # e.g. ["tts", "speech"]
+---
+bool success
+string message

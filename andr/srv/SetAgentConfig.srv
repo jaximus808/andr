@@ -1,0 +1,8 @@
+string llm_backend            # "ollama" | "openai" (empty = no change)
+string llm_model              # model name (empty = no change)
+string llm_host               # host URL (empty = no change)
+float64 llm_temperature       # -1.0 = no change
+int32 max_iterations          # -1 = no change
+---
+bool success
+string message

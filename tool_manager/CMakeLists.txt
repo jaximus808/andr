@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(skill_executor)
+project(tool_manager)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
@@ -13,29 +13,26 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
-find_package(andr REQUIRED)          # provides the ExecuteSkill action type
-find_package(yaml-cpp REQUIRED)
+find_package(andr REQUIRED)          # ExecuteSkill action + RegisterTool/DeregisterTool/ListTools services
 
 # ── Executable ────────────────────────────────────────────────────────────────
-add_executable(skill_executor_node
-  src/skill_executor.cpp
+add_executable(tool_manager_node
+  src/tool_manager.cpp
 )
 
-target_include_directories(skill_executor_node PUBLIC
+target_include_directories(tool_manager_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
 
-ament_target_dependencies(skill_executor_node
+ament_target_dependencies(tool_manager_node
   rclcpp
   rclcpp_action
   andr
 )
 
-target_link_libraries(skill_executor_node yaml-cpp)
-
 # ── Install ───────────────────────────────────────────────────────────────────
-install(TARGETS skill_executor_node
+install(TARGETS tool_manager_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

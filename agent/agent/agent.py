@@ -12,7 +12,6 @@ llm_backend         string   "ollama"        # "ollama" | "openai"
 llm_model           string   ""              # model name (e.g. "llama3", "gpt-4o")
 llm_host            string   "http://localhost:11434"
 llm_temperature     float    0.2
-skills_yaml         string   ""
 memory_backend      string   "chroma"
 memory_top_k        int      4
 max_iterations      int      20
@@ -29,6 +28,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from andr.action import Agent
+from andr.srv import GetAgentConfig, SetAgentConfig
 
 from .memory import create_memory, MemoryStore
 from .skills import SkillsRegistry, SkillExecutor
@@ -72,6 +72,7 @@ class AgentServer(Node):
         self._setup_skills()
         self._setup_langchain()
         self._setup_action_server()
+        self._setup_config_services()
 
     # ------------------------------------------------------------------
     # Setup
@@ -82,7 +83,6 @@ class AgentServer(Node):
         self.declare_parameter("llm_model",        "")
         self.declare_parameter("llm_host",         "http://localhost:11434")
         self.declare_parameter("llm_temperature",  0.2)
-        self.declare_parameter("skills_yaml",      "")
         self.declare_parameter("memory_backend",   "chroma")
         self.declare_parameter("memory_top_k",     4)
         self.declare_parameter("max_iterations",   20)
@@ -94,15 +94,10 @@ class AgentServer(Node):
         self.get_logger().info(f"Memory: backend='{backend}' top_k={self._memory_top_k}")
 
     def _setup_skills(self) -> None:
-        yaml_path = self._str("skills_yaml")
-        if yaml_path:
-            self._skills = SkillsRegistry.from_yaml(yaml_path)
-            self.get_logger().info(
-                f"Skills: loaded {len(self._skills)} from '{yaml_path}'"
-            )
-        else:
-            self._skills = SkillsRegistry()
-            self.get_logger().info("Skills: no YAML configured — empty registry.")
+        self._skills = SkillsRegistry.from_tool_manager(self, timeout_sec=5.0)
+        self.get_logger().info(
+            f"Skills: discovered {len(self._skills)} tool(s) from tool_manager."
+        )
         self._skill_executor = SkillExecutor(self._skills, self)
 
     def _setup_langchain(self) -> None:
@@ -147,6 +142,70 @@ class AgentServer(Node):
             callback_group=self._cb_group,
         )
         self.get_logger().info(f"AgentServer ready — action '{self.ACTION_NAME}'")
+
+    def _setup_config_services(self) -> None:
+        self._get_config_srv = self.create_service(
+            GetAgentConfig, "agent/get_config", self._handle_get_config,
+            callback_group=self._cb_group,
+        )
+        self._set_config_srv = self.create_service(
+            SetAgentConfig, "agent/set_config", self._handle_set_config,
+            callback_group=self._cb_group,
+        )
+        self.get_logger().info("Agent config services ready (agent/get_config, agent/set_config)")
+
+    def _handle_get_config(self, _req, res):
+        res.llm_backend = self._str("llm_backend")
+        res.llm_model = self._str("llm_model")
+        res.llm_host = self._str("llm_host")
+        res.llm_temperature = self.get_parameter("llm_temperature").get_parameter_value().double_value
+        res.max_iterations = self.get_parameter("max_iterations").get_parameter_value().integer_value
+        res.memory_backend = self._str("memory_backend")
+        res.memory_top_k = self.get_parameter("memory_top_k").get_parameter_value().integer_value
+        return res
+
+    def _handle_set_config(self, req, res):
+        """Update agent config params and rebuild the LLM + agent graph."""
+        from rclpy.parameter import Parameter
+
+        changes = []
+
+        if req.llm_backend:
+            self.set_parameters([Parameter("llm_backend", Parameter.Type.STRING, req.llm_backend)])
+            changes.append(f"llm_backend={req.llm_backend}")
+
+        if req.llm_model:
+            self.set_parameters([Parameter("llm_model", Parameter.Type.STRING, req.llm_model)])
+            changes.append(f"llm_model={req.llm_model}")
+
+        if req.llm_host:
+            self.set_parameters([Parameter("llm_host", Parameter.Type.STRING, req.llm_host)])
+            changes.append(f"llm_host={req.llm_host}")
+
+        if req.llm_temperature >= 0.0:
+            self.set_parameters([Parameter("llm_temperature", Parameter.Type.DOUBLE, req.llm_temperature)])
+            changes.append(f"llm_temperature={req.llm_temperature}")
+
+        if req.max_iterations > 0:
+            self.set_parameters([Parameter("max_iterations", Parameter.Type.INTEGER, req.max_iterations)])
+            changes.append(f"max_iterations={req.max_iterations}")
+
+        if not changes:
+            res.success = True
+            res.message = "No changes requested."
+            return res
+
+        try:
+            self._setup_langchain()
+            res.success = True
+            res.message = f"Updated: {', '.join(changes)}. LLM rebuilt."
+            self.get_logger().info(f"Config updated: {', '.join(changes)}")
+        except Exception as exc:
+            res.success = False
+            res.message = f"Failed to rebuild LLM after config change: {exc}"
+            self.get_logger().error(res.message)
+
+        return res
 
     def destroy(self):
         self._action_server.destroy()

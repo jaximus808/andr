@@ -1,87 +1,71 @@
-"""Mock walk action server — placeholder for locomotion hardware interface."""
+"""Walk tool — placeholder for locomotion hardware interface."""
 
-import json
 import time
+from dataclasses import dataclass
 
 import rclpy
-from rclpy.action import ActionServer, CancelResponse, GoalResponse
-from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
 
 from andr.action import ExecuteSkill
+from andr_tools import BaseAgentTool
 
 
-class WalkServer(Node):
-    def __init__(self):
-        super().__init__("walk_server")
-        self._action_server = ActionServer(
-            self,
-            ExecuteSkill,
-            "/skills/walk",
-            execute_callback=self._execute_cb,
-            goal_callback=self._goal_cb,
-            cancel_callback=self._cancel_cb,
-        )
-        self.get_logger().info("WalkServer ready on '/skills/walk'")
+class WalkTool(BaseAgentTool):
+    TOOL_NAME = "walk"
+    TOOL_DESCRIPTION = "Walk forward/backward for a duration"
+    TOOL_PARAMETERS = [
+        {"name": "direction", "type": "string", "required": False,
+         "description": "Walk direction: forward or backward (default forward)"},
+        {"name": "duration_s", "type": "float", "required": False,
+         "description": "How long to walk in seconds (default 2.0)"},
+        {"name": "speed", "type": "float", "required": False,
+         "description": "Walking speed in m/s (default 0.5)"},
+    ]
+    TOOL_CATEGORY = "movement"
+    TOOL_TAGS = ["locomotion", "movement"]
 
-    def _goal_cb(self, goal_request) -> GoalResponse:
+    @dataclass
+    class ParamsType:
+        direction: str = "forward"
+        duration_s: float = 2.0
+        speed: float = 0.5
+
+    def _execute(self, params: ParamsType, goal_handle) -> dict:
         self.get_logger().info(
-            f"Walk goal received: {goal_request.params_json}"
-        )
-        return GoalResponse.ACCEPT
-
-    def _cancel_cb(self, goal_handle) -> CancelResponse:
-        return CancelResponse.ACCEPT
-
-    def _execute_cb(self, goal_handle) -> ExecuteSkill.Result:
-        params = json.loads(goal_handle.request.params_json or "{}")
-        direction = params.get("direction", "forward")
-        duration_s = params.get("duration_s", 2.0)
-        speed = params.get("speed", 0.5)
-
-        self.get_logger().info(
-            f"[MOCK WALK] direction='{direction}' duration={duration_s}s speed={speed}"
+            f"[MOCK WALK] direction='{params.direction}' "
+            f"duration={params.duration_s}s speed={params.speed}"
         )
 
-        # Simulate walking with progress updates
         steps = 5
-        step_time = duration_s / steps
+        step_time = params.duration_s / steps
         for i in range(1, steps + 1):
             if goal_handle.is_cancel_requested:
-                result = ExecuteSkill.Result()
-                result.success = False
-                result.result_json = json.dumps({"status": "cancelled"})
-                result.error_message = "Walk cancelled"
-                goal_handle.canceled()
-                return result
+                return {"status": "cancelled"}
 
             feedback = ExecuteSkill.Feedback()
-            feedback.status = f"walking {direction} ({i}/{steps})"
+            feedback.status = f"walking {params.direction} ({i}/{steps})"
             feedback.progress = float(i) / steps
             goal_handle.publish_feedback(feedback)
             time.sleep(step_time)
 
-        result = ExecuteSkill.Result()
-        result.success = True
-        result.result_json = json.dumps({
-            "status": "done",
-            "direction": direction,
-            "distance_m": speed * duration_s,
-            "duration_s": duration_s,
-        })
-        result.error_message = ""
-
         self.get_logger().info(
-            f"[MOCK WALK] Done — walked {direction} for {duration_s}s"
+            f"[MOCK WALK] Done — walked {params.direction} for {params.duration_s}s"
         )
-        goal_handle.succeed()
-        return result
+        return {
+            "status": "done",
+            "direction": params.direction,
+            "distance_m": params.speed * params.duration_s,
+            "duration_s": params.duration_s,
+        }
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = WalkServer()
+    node = WalkTool()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:

@@ -30,7 +30,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 
 from andr.msg import Prompt, RobotSpeech
 from andr.action import TaskGoal
-from andr.srv import SaveMap, SavePoint, GetMapPoints, GetMaps, SetSlamConfig, GetSlamConfig, RestartSlam
+from andr.srv import SaveMap, SavePoint, GetMapPoints, GetMaps, SetSlamConfig, GetSlamConfig, RestartSlam, GetAgentConfig, SetAgentConfig
 
 
 class RosBridgeNode(Node):
@@ -99,6 +99,10 @@ class RosBridgeNode(Node):
         self._set_slam_config_client = self.create_client(SetSlamConfig, "map_manager/set_slam_config")
         self._get_slam_config_client = self.create_client(GetSlamConfig, "map_manager/get_slam_config")
         self._restart_slam_client = self.create_client(RestartSlam, "map_manager/restart_slam")
+
+        # ── Service clients for agent config ──────────────────────────────
+        self._get_agent_config_client = self.create_client(GetAgentConfig, "agent/get_config")
+        self._set_agent_config_client = self.create_client(SetAgentConfig, "agent/set_config")
 
         # ── Periodic node/action discovery (every 5s) ────────────────────
         self._discovery_timer = self.create_timer(5.0, self._discover_nodes)
@@ -455,6 +459,66 @@ class RosBridgeNode(Node):
             self._push({"type": "restart_slam_result", "success": res.success, "message": res.message})
         except Exception as e:
             self._push({"type": "restart_slam_result", "success": False, "message": str(e)})
+
+    # ── Agent config ─────────────────────────────────────────────────
+
+    def get_agent_config(self) -> None:
+        """Fetch current agent config and push to UI."""
+        if not self._get_agent_config_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "agent_config", "success": False,
+                         "message": "agent/get_config service not available"})
+            return
+
+        future = self._get_agent_config_client.call_async(GetAgentConfig.Request())
+        future.add_done_callback(self._on_get_agent_config_result)
+
+    def _on_get_agent_config_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({
+                "type": "agent_config",
+                "success": True,
+                "llm_backend": res.llm_backend,
+                "llm_model": res.llm_model,
+                "llm_host": res.llm_host,
+                "llm_temperature": res.llm_temperature,
+                "max_iterations": res.max_iterations,
+                "memory_backend": res.memory_backend,
+                "memory_top_k": res.memory_top_k,
+            })
+        except Exception as e:
+            self._push({"type": "agent_config", "success": False, "message": str(e)})
+
+    def set_agent_config(self, config: dict) -> None:
+        """Update agent config via service call."""
+        if not self._set_agent_config_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "agent_config_result", "success": False,
+                         "message": "agent/set_config service not available"})
+            return
+
+        req = SetAgentConfig.Request()
+        req.llm_backend = str(config.get("llm_backend", ""))
+        req.llm_model = str(config.get("llm_model", ""))
+        req.llm_host = str(config.get("llm_host", ""))
+        req.llm_temperature = float(config.get("llm_temperature", -1.0))
+        req.max_iterations = int(config.get("max_iterations", -1))
+
+        future = self._set_agent_config_client.call_async(req)
+        future.add_done_callback(self._on_set_agent_config_result)
+
+    def _on_set_agent_config_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({
+                "type": "agent_config_result",
+                "success": res.success,
+                "message": res.message,
+            })
+            # Refresh config after update
+            if res.success:
+                self.get_agent_config()
+        except Exception as e:
+            self._push({"type": "agent_config_result", "success": False, "message": str(e)})
 
     # ── Node / action server discovery ───────────────────────────────────
 

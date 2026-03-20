@@ -249,6 +249,58 @@
       font-style: italic;
     }
 
+    /* ── Agent config section ────────────────────────────────────────── */
+    .config-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .config-row label {
+      font-size: 0.72rem;
+      color: #999;
+      min-width: 72px;
+      flex-shrink: 0;
+    }
+    .config-row input, .config-row select {
+      flex: 1;
+      background: #1c1c1c;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #e0e0e0;
+      padding: 5px 8px;
+      font-size: 0.78rem;
+      font-family: 'Consolas', 'Fira Code', monospace;
+      outline: none;
+    }
+    .config-row input:focus, .config-row select:focus { border-color: #42a5f5; }
+
+    #save-config-btn {
+      width: 100%;
+      background: #2e7d32;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 0;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: background 0.15s;
+      margin-top: 4px;
+    }
+    #save-config-btn:hover  { background: #388e3c; }
+    #save-config-btn:active { background: #1b5e20; }
+    #save-config-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+    #config-status-msg {
+      font-size: 0.72rem;
+      margin-top: 6px;
+      min-height: 16px;
+    }
+    #config-status-msg.success { color: #81c784; }
+    #config-status-msg.error   { color: #ef9a9a; }
+    #config-status-msg.loading { color: #ffcc80; }
+
     /* ── Map config section ─────────────────────────────────────────── */
     .map-config-row {
       display: flex;
@@ -343,6 +395,34 @@
   <div class="panel" id="panel-status">
     <div class="panel-header">System Status</div>
     <div id="status-content">
+      <div class="status-section">
+        <h3>Agent Config</h3>
+        <div class="config-row">
+          <label>Backend</label>
+          <select id="cfg-backend">
+            <option value="ollama">ollama</option>
+            <option value="openai">openai</option>
+          </select>
+        </div>
+        <div class="config-row">
+          <label>Model</label>
+          <input type="text" id="cfg-model" placeholder="e.g. llama3, gpt-4o" />
+        </div>
+        <div class="config-row">
+          <label>Host</label>
+          <input type="text" id="cfg-host" placeholder="http://localhost:11434" />
+        </div>
+        <div class="config-row">
+          <label>Temperature</label>
+          <input type="number" id="cfg-temperature" min="0" max="2" step="0.1" value="0.2" />
+        </div>
+        <div class="config-row">
+          <label>Max Iters</label>
+          <input type="number" id="cfg-max-iter" min="1" max="100" step="1" value="20" />
+        </div>
+        <button id="save-config-btn">Save Config</button>
+        <div id="config-status-msg"></div>
+      </div>
       <div class="status-section">
         <h3>Map / SLAM Config</h3>
         <div class="map-config-row">
@@ -452,6 +532,7 @@
       reconnectDelay = 1000;
       addLog('connected', 'WebSocket connected');
       requestMaps();
+      requestAgentConfig();
     };
 
     ws.onclose = () => {
@@ -570,6 +651,32 @@
         break;
       }
 
+      case 'agent_config': {
+        if (msg.success) {
+          cfgBackend.value = msg.llm_backend || 'ollama';
+          cfgModel.value = msg.llm_model || '';
+          cfgHost.value = msg.llm_host || '';
+          cfgTemperature.value = msg.llm_temperature ?? 0.2;
+          cfgMaxIter.value = msg.max_iterations ?? 20;
+          setConfigStatus('', '');
+        } else {
+          setConfigStatus(msg.message || 'Failed to load config', 'error');
+        }
+        break;
+      }
+
+      case 'agent_config_result': {
+        saveConfigBtn.disabled = false;
+        if (msg.success) {
+          setConfigStatus(msg.message || 'Saved', 'success');
+          addLog('robot_status', 'Agent config updated: ' + (msg.message || ''));
+        } else {
+          setConfigStatus(msg.message || 'Failed', 'error');
+          addLog('error', 'Agent config error: ' + (msg.message || ''));
+        }
+        break;
+      }
+
       case 'node_status':
         renderNodeStatus(msg.nodes || [], msg.action_servers || []);
         break;
@@ -672,6 +779,46 @@
       map_name: mapName || '',
       localization: localization,
     }));
+  });
+
+  // ── Agent config ─────────────────────────────────────────────────────
+  const cfgBackend     = document.getElementById('cfg-backend');
+  const cfgModel       = document.getElementById('cfg-model');
+  const cfgHost        = document.getElementById('cfg-host');
+  const cfgTemperature = document.getElementById('cfg-temperature');
+  const cfgMaxIter     = document.getElementById('cfg-max-iter');
+  const saveConfigBtn  = document.getElementById('save-config-btn');
+  const configStatusMsg = document.getElementById('config-status-msg');
+
+  function setConfigStatus(text, cls) {
+    configStatusMsg.textContent = text;
+    configStatusMsg.className = cls || '';
+  }
+
+  function requestAgentConfig() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'get_agent_config' }));
+    }
+  }
+
+  saveConfigBtn.addEventListener('click', () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setConfigStatus('Not connected', 'error');
+      return;
+    }
+
+    saveConfigBtn.disabled = true;
+    setConfigStatus('Saving...', 'loading');
+
+    const config = {
+      llm_backend: cfgBackend.value,
+      llm_model: cfgModel.value,
+      llm_host: cfgHost.value,
+      llm_temperature: parseFloat(cfgTemperature.value),
+      max_iterations: parseInt(cfgMaxIter.value, 10),
+    };
+
+    ws.send(JSON.stringify({ type: 'set_agent_config', config }));
   });
 
   // ── Boot ─────────────────────────────────────────────────────────────
