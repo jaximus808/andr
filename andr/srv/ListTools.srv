@@ -1,0 +1,6 @@
+---
+string[] tool_names
+string[] descriptions
+string[] action_servers
+string[] parameters_json      # one JSON array per tool
+string[] categories

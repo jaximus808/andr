@@ -94,15 +94,22 @@ class AgentServer(Node):
         self.get_logger().info(f"Memory: backend='{backend}' top_k={self._memory_top_k}")
 
     def _setup_skills(self) -> None:
-        yaml_path = self._str("skills_yaml")
-        if yaml_path:
-            self._skills = SkillsRegistry.from_yaml(yaml_path)
+        # Try dynamic discovery from tool_manager first
+        self._skills = SkillsRegistry.from_tool_manager(self, timeout_sec=5.0)
+        if len(self._skills) > 0:
             self.get_logger().info(
-                f"Skills: loaded {len(self._skills)} from '{yaml_path}'"
+                f"Skills: discovered {len(self._skills)} from tool_manager."
             )
         else:
-            self._skills = SkillsRegistry()
-            self.get_logger().info("Skills: no YAML configured — empty registry.")
+            # Fallback to YAML if tool_manager not available or empty
+            yaml_path = self._str("skills_yaml")
+            if yaml_path:
+                self._skills = SkillsRegistry.from_yaml(yaml_path)
+                self.get_logger().info(
+                    f"Skills: loaded {len(self._skills)} from '{yaml_path}' (fallback)"
+                )
+            else:
+                self.get_logger().info("Skills: no tools discovered and no YAML configured.")
         self._skill_executor = SkillExecutor(self._skills, self)
 
     def _setup_langchain(self) -> None:

@@ -34,6 +34,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/GetSlamConfig.srv"
     "srv/RestartSlam.srv"
     "srv/GetPointCoordinates.srv"
+    "srv/RegisterTool.srv"
+    "srv/DeregisterTool.srv"
+    "srv/ListTools.srv"
     "action/Wander.action"
     "action/Agent.action"
     "action/ExecuteSkill.action"
@@ -103,7 +106,6 @@ install(FILES
 
 install(FILES
   config/skills.yaml
-  config/skill_executor_config.yaml
   DESTINATION share/${PROJECT_NAME}
 )
 install(DIRECTORY include/

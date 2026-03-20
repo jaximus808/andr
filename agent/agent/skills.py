@@ -111,6 +111,49 @@ class SkillsRegistry:
         """Build a registry directly from a list of dicts (useful in tests)."""
         return cls([Skill.from_dict(d) for d in raw])
 
+    @classmethod
+    def from_tool_manager(cls, node, timeout_sec: float = 10.0) -> "SkillsRegistry":
+        """Discover tools dynamically by calling the tool_manager/list service."""
+        import json as _json
+
+        try:
+            from andr.srv import ListTools  # noqa: PLC0415
+        except ImportError:
+            logger.warning("ListTools service type not available — using empty registry.")
+            return cls()
+
+        client = node.create_client(ListTools, "tool_manager/list")
+        if not client.wait_for_service(timeout_sec=timeout_sec):
+            logger.warning(
+                "tool_manager/list service not available after %.1fs — using empty registry.",
+                timeout_sec,
+            )
+            return cls()
+
+        req = ListTools.Request()
+        future = client.call_async(req)
+
+        # Block until result
+        event = threading.Event()
+        future.add_done_callback(lambda _: event.set())
+        if not event.wait(timeout=timeout_sec):
+            logger.warning("tool_manager/list timed out — using empty registry.")
+            return cls()
+
+        res = future.result()
+        skills = []
+        for i, name in enumerate(res.tool_names):
+            params_raw = _json.loads(res.parameters_json[i]) if i < len(res.parameters_json) else []
+            skills.append(Skill(
+                name=name,
+                description=res.descriptions[i] if i < len(res.descriptions) else "",
+                parameters=[SkillParameter.from_dict(p) for p in params_raw],
+                category=res.categories[i] if i < len(res.categories) else "general",
+            ))
+
+        logger.info("Discovered %d tool(s) from tool_manager.", len(skills))
+        return cls(skills)
+
     # ------------------------------------------------------------------
     # Lookups
     # ------------------------------------------------------------------
@@ -154,7 +197,7 @@ class SkillsRegistry:
 
 class SkillExecutor:
     """
-    Dispatches skill calls to the ``/skill_executor`` ROS 2 node via ExecuteSkill actions.
+    Dispatches skill calls to the ``/tool_manager/execute`` ROS 2 node via ExecuteSkill actions.
 
     Parameters
     ----------
@@ -163,18 +206,18 @@ class SkillExecutor:
     node:
         rclpy.node.Node that owns this executor (action client is attached to it).
     action_server_name:
-        ROS 2 action name of the skill_executor node. Default: /skill_executor
+        ROS 2 action name of the tool_manager execute endpoint.
     timeout_s:
         Server availability timeout and per-call timeout in seconds.
     """
 
-    ACTION_NAME = "/skill_executor"
+    ACTION_NAME = "/tool_manager/execute"
 
     def __init__(
         self,
         registry: SkillsRegistry,
         node,                          # rclpy.node.Node — avoids circular import
-        action_server_name: str = "/skill_executor",
+        action_server_name: str = "/tool_manager/execute",
         timeout_s: float = 30.0,
     ):
         self._registry    = registry

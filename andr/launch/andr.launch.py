@@ -91,22 +91,14 @@ def _agent_node(context, *args, **kwargs) -> list:
     return [node]
 
 
-def _skill_executor_node(context, *args, **kwargs) -> list:
-    """Build the skill_executor C++ node with the config path resolved."""
-    from ament_index_python.packages import get_package_share_directory
-    import os
-
-    config_yaml = os.path.join(
-        get_package_share_directory("andr"), "skill_executor_config.yaml"
-    )
-
+def _tool_manager_node(context, *args, **kwargs) -> list:
+    """Build the tool_manager C++ node."""
     node = Node(
-        package="skill_executor",
-        executable="skill_executor_node",
-        name="skill_executor",
+        package="tool_manager",
+        executable="tool_manager_node",
+        name="tool_manager",
         output="screen",
         emulate_tty=True,
-        parameters=[{"config_yaml": config_yaml}],
     )
     return [node]
 
@@ -124,7 +116,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("launch_task_mgr", default_value="true",
                               description="Start the task_manager_server node"),
         DeclareLaunchArgument("launch_skills", default_value="true",
-                              description="Start skill_executor + mock skill servers"),
+                              description="Start tool_manager + tool servers"),
         DeclareLaunchArgument("launch_ui",    default_value="true",
                               description="Start the andr_ui web dashboard"),
         DeclareLaunchArgument("ui_port",      default_value="8080",
@@ -190,9 +182,9 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(LaunchConfiguration("launch_ui")),
     )
 
-    # ── Skill executor + mock skill servers ─────────────────────────────
-    skill_executor_node = OpaqueFunction(
-        function=_skill_executor_node,
+    # ── Tool manager + tool servers ──────────────────────────────────────
+    tool_manager_node = OpaqueFunction(
+        function=_tool_manager_node,
         condition=IfCondition(LaunchConfiguration("launch_skills")),
     )
 
@@ -251,6 +243,6 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         *args, startup_msg,
         brain_node, agent_node_action, task_manager_node, ui_process,
-        skill_executor_node, speak_server_node, walk_server_node, spin_server_node,
+        tool_manager_node, speak_server_node, walk_server_node, spin_server_node,
         navigate_to_point_server_node,
     ])

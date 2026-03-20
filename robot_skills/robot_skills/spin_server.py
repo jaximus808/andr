@@ -1,47 +1,47 @@
-"""Spin action server — rotates the robot in place for a given duration.
+"""Spin tool — rotates the robot in place for a given duration.
 
 Publishes geometry_msgs/Twist on /cmd_vel to spin the robot in Gazebo.
 """
 
-import json
 import time
+from dataclasses import dataclass
 
 import rclpy
-from rclpy.action import ActionServer, CancelResponse, GoalResponse
-from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
 from geometry_msgs.msg import Twist
 
 from andr.action import ExecuteSkill
+from andr_tools import BaseAgentTool
 
 
-class SpinServer(Node):
-    def __init__(self):
-        super().__init__("spin_server")
-        self._action_server = ActionServer(
-            self,
-            ExecuteSkill,
-            "/skills/spin",
-            execute_callback=self._execute_cb,
-            goal_callback=self._goal_cb,
-            cancel_callback=self._cancel_cb,
-        )
+class SpinTool(BaseAgentTool):
+    TOOL_NAME = "spin"
+    TOOL_DESCRIPTION = "Rotate the robot in place for a given duration"
+    TOOL_PARAMETERS = [
+        {"name": "duration_s", "type": "float", "required": False,
+         "description": "How long to spin in seconds (default 3.0)"},
+        {"name": "speed_deg_s", "type": "float", "required": False,
+         "description": "Angular speed in degrees/second (default 90)"},
+        {"name": "direction", "type": "string", "required": False,
+         "description": "Spin direction: left or right (default left)"},
+    ]
+    TOOL_CATEGORY = "movement"
+    TOOL_TAGS = ["rotation", "movement"]
+
+    @dataclass
+    class ParamsType:
+        duration_s: float = 3.0
+        speed_deg_s: float = 90.0
+        direction: str = "left"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self._cmd_vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
-        self.get_logger().info("SpinServer ready on '/skills/spin'")
 
-    def _goal_cb(self, goal_request) -> GoalResponse:
-        self.get_logger().info(
-            f"Spin goal received: {goal_request.params_json}"
-        )
-        return GoalResponse.ACCEPT
-
-    def _cancel_cb(self, goal_handle) -> CancelResponse:
-        return CancelResponse.ACCEPT
-
-    def _execute_cb(self, goal_handle) -> ExecuteSkill.Result:
-        params = json.loads(goal_handle.request.params_json or "{}")
-        duration_s = float(params.get("duration_s", 3.0))
-        speed_deg_s = float(params.get("speed_deg_s", 90.0))
-        direction = params.get("direction", "left")
+    def _execute(self, params: ParamsType, goal_handle) -> dict:
+        duration_s = params.duration_s
+        speed_deg_s = params.speed_deg_s
+        direction = params.direction
 
         # Convert deg/s to rad/s; negate for clockwise (right)
         angular_vel = speed_deg_s * 3.14159265 / 180.0
@@ -56,25 +56,17 @@ class SpinServer(Node):
         twist = Twist()
         twist.angular.z = angular_vel
 
-        # Publish cmd_vel at ~20 Hz for the requested duration
         rate_hz = 20.0
         total_ticks = int(duration_s * rate_hz)
         tick_period = 1.0 / rate_hz
 
         for i in range(1, total_ticks + 1):
             if goal_handle.is_cancel_requested:
-                # Stop the robot
                 self._cmd_vel_pub.publish(Twist())
-                result = ExecuteSkill.Result()
-                result.success = False
-                result.result_json = json.dumps({"status": "cancelled"})
-                result.error_message = "Spin cancelled"
-                goal_handle.canceled()
-                return result
+                return {"status": "cancelled"}
 
             self._cmd_vel_pub.publish(twist)
 
-            # Publish feedback every ~0.5 s
             if i % int(rate_hz / 2) == 0 or i == total_ticks:
                 feedback = ExecuteSkill.Feedback()
                 feedback.status = f"spinning {direction} ({i}/{total_ticks})"
@@ -87,29 +79,24 @@ class SpinServer(Node):
         self._cmd_vel_pub.publish(Twist())
 
         total_deg = speed_deg_s * duration_s
-        result = ExecuteSkill.Result()
-        result.success = True
-        result.result_json = json.dumps({
+        self.get_logger().info(
+            f"[SPIN] Done — rotated {direction} ~{total_deg:.0f}° over {duration_s}s"
+        )
+        return {
             "status": "done",
             "direction": direction,
             "duration_s": duration_s,
             "total_rotation_deg": total_deg,
-        })
-        result.error_message = ""
-
-        self.get_logger().info(
-            f"[SPIN] Done — rotated {direction} ~{total_deg:.0f}° "
-            f"over {duration_s}s"
-        )
-        goal_handle.succeed()
-        return result
+        }
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = SpinServer()
+    node = SpinTool()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
