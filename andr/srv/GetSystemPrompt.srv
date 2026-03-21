@@ -1,0 +1,6 @@
+# Request — empty, returns the current active system prompt
+---
+bool success
+string prompt
+int32 version
+string timestamp

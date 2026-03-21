@@ -30,7 +30,11 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 
 from andr.msg import Prompt, RobotSpeech
 from andr.action import TaskGoal
-from andr.srv import SaveMap, SavePoint, GetMapPoints, GetMaps, SetSlamConfig, GetSlamConfig, RestartSlam, GetAgentConfig, SetAgentConfig
+from andr.srv import (
+    SaveMap, SavePoint, GetMapPoints, GetMaps, SetSlamConfig, GetSlamConfig, RestartSlam,
+    GetAgentConfig, SetAgentConfig,
+    GetSystemPrompt, SetSystemPrompt, GetPromptHistory,
+)
 
 
 class RosBridgeNode(Node):
@@ -103,6 +107,11 @@ class RosBridgeNode(Node):
         # ── Service clients for agent config ──────────────────────────────
         self._get_agent_config_client = self.create_client(GetAgentConfig, "agent/get_config")
         self._set_agent_config_client = self.create_client(SetAgentConfig, "agent/set_config")
+
+        # ── Service clients for prompt_manager ─────────────────────────
+        self._get_prompt_client = self.create_client(GetSystemPrompt, "prompt_manager/get_system_prompt")
+        self._set_prompt_client = self.create_client(SetSystemPrompt, "prompt_manager/set_system_prompt")
+        self._get_history_client = self.create_client(GetPromptHistory, "prompt_manager/get_prompt_history")
 
         # ── Periodic node/action discovery (every 5s) ────────────────────
         self._discovery_timer = self.create_timer(5.0, self._discover_nodes)
@@ -519,6 +528,85 @@ class RosBridgeNode(Node):
                 self.get_agent_config()
         except Exception as e:
             self._push({"type": "agent_config_result", "success": False, "message": str(e)})
+
+    # ── Prompt management ──────────────────────────────────────────────
+
+    def get_system_prompt(self) -> None:
+        """Fetch current system prompt and push to UI."""
+        if not self._get_prompt_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "system_prompt", "success": False,
+                         "message": "prompt_manager not available"})
+            return
+
+        future = self._get_prompt_client.call_async(GetSystemPrompt.Request())
+        future.add_done_callback(self._on_get_prompt_result)
+
+    def _on_get_prompt_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({
+                "type": "system_prompt",
+                "success": res.success,
+                "prompt": res.prompt,
+                "version": res.version,
+                "timestamp": res.timestamp,
+            })
+        except Exception as e:
+            self._push({"type": "system_prompt", "success": False, "message": str(e)})
+
+    def set_system_prompt(self, prompt: str) -> None:
+        """Set a new system prompt."""
+        if not self._set_prompt_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "set_prompt_result", "success": False,
+                         "message": "prompt_manager not available"})
+            return
+
+        req = SetSystemPrompt.Request()
+        req.prompt = prompt
+
+        future = self._set_prompt_client.call_async(req)
+        future.add_done_callback(self._on_set_prompt_result)
+
+    def _on_set_prompt_result(self, future) -> None:
+        try:
+            res = future.result()
+            self._push({
+                "type": "set_prompt_result",
+                "success": res.success,
+                "message": res.message,
+                "version": res.version,
+            })
+        except Exception as e:
+            self._push({"type": "set_prompt_result", "success": False, "message": str(e)})
+
+    def get_prompt_history(self) -> None:
+        """Fetch prompt version history and push to UI."""
+        if not self._get_history_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "prompt_history", "success": False,
+                         "message": "prompt_manager not available"})
+            return
+
+        future = self._get_history_client.call_async(GetPromptHistory.Request())
+        future.add_done_callback(self._on_get_history_result)
+
+    def _on_get_history_result(self, future) -> None:
+        try:
+            res = future.result()
+            entries = []
+            for i in range(len(res.versions)):
+                entries.append({
+                    "version": res.versions[i],
+                    "prompt": res.prompts[i],
+                    "timestamp": res.timestamps[i],
+                })
+            self._push({
+                "type": "prompt_history",
+                "success": res.success,
+                "entries": entries,
+            })
+        except Exception as e:
+            self._push({"type": "prompt_history", "success": False,
+                         "message": str(e), "entries": []})
 
     # ── Node / action server discovery ───────────────────────────────────
 

@@ -1,0 +1,6 @@
+# Request — returns all prompt versions (newest first)
+---
+bool success
+int32[] versions
+string[] prompts
+string[] timestamps

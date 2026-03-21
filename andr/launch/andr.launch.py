@@ -142,6 +142,17 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(LaunchConfiguration("launch_brain")),
     )
 
+    prompt_manager_node = Node(
+        package="agent",
+        executable="prompt_manager",
+        name="prompt_manager",
+        output="screen",
+        emulate_tty=True,
+        arguments=["--ros-args", "--log-level",
+                   LaunchConfiguration("log_level")],
+        condition=IfCondition(LaunchConfiguration("launch_agent")),
+    )
+
     agent_node_action = OpaqueFunction(
         function=_agent_node,
         condition=IfCondition(LaunchConfiguration("launch_agent")),
@@ -226,7 +237,7 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription([
         *args, startup_msg,
-        brain_node, agent_node_action, task_manager_node, ui_process,
+        brain_node, prompt_manager_node, agent_node_action, task_manager_node, ui_process,
         tool_manager_node, speak_server_node, walk_server_node, spin_server_node,
         navigate_to_point_server_node,
     ])

@@ -6,6 +6,11 @@ LangChain tool-calling agent from the configured LLM and the robot's skill
 tools, then invokes it.  LangChain handles the ReAct loop (LLM → tool → LLM)
 internally until the task is solved or an error occurs.
 
+The agent dynamically discovers available tools by calling the
+``get_available_tools`` service on the skill_executor node at startup,
+instead of loading skills.yaml directly. This means adding new tools only
+requires updating the skill_executor config — no agent changes needed.
+
 ROS 2 parameters
 ----------------
 llm_backend         string   "ollama"        # "ollama" | "openai"
@@ -28,7 +33,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from andr.action import Agent
-from andr.srv import GetAgentConfig, SetAgentConfig
+from andr.srv import GetAgentConfig, SetAgentConfig, GetSystemPrompt
 
 from .memory import create_memory, MemoryStore
 from .skills import SkillsRegistry, SkillExecutor
@@ -70,6 +75,7 @@ class AgentServer(Node):
         self._declare_parameters()
         self._setup_memory()
         self._setup_skills()
+        self._system_prompt = self._fetch_system_prompt()
         self._setup_langchain()
         self._setup_action_server()
         self._setup_config_services()
@@ -100,6 +106,29 @@ class AgentServer(Node):
         )
         self._skill_executor = SkillExecutor(self._skills, self)
 
+    def _fetch_system_prompt(self) -> str:
+        """Fetch the active system prompt from prompt_manager, fall back to hardcoded default."""
+        client = self.create_client(GetSystemPrompt, "prompt_manager/get_system_prompt")
+
+        self.get_logger().info("Waiting for prompt_manager/get_system_prompt service…")
+        if not client.wait_for_service(timeout_sec=10.0):
+            self.get_logger().warn(
+                "prompt_manager not available — using hardcoded default system prompt."
+            )
+            return DEFAULT_SYSTEM_PROMPT
+
+        future = client.call_async(GetSystemPrompt.Request())
+        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+
+        if future.result() is None or not future.result().success:
+            self.get_logger().warn("Failed to fetch system prompt — using hardcoded default.")
+            return DEFAULT_SYSTEM_PROMPT
+
+        prompt = future.result().prompt
+        version = future.result().version
+        self.get_logger().info(f"Loaded system prompt version {version} from prompt_manager")
+        return prompt
+
     def _setup_langchain(self) -> None:
         from langgraph.prebuilt import create_react_agent
 
@@ -126,7 +155,7 @@ class AgentServer(Node):
         self._agent = create_react_agent(
             self._llm,
             self._tools,
-            prompt=DEFAULT_SYSTEM_PROMPT,
+            prompt=self._system_prompt,
         )
         self.get_logger().info("ReAct agent graph cached for reuse.")
 

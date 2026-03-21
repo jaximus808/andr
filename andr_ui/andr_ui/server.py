@@ -198,6 +198,20 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 if _bridge is not None:
                     _bridge.set_agent_config(msg.get("config", {}))
 
+            elif msg_type == "get_system_prompt":
+                if _bridge is not None:
+                    _bridge.get_system_prompt()
+
+            elif msg_type == "set_system_prompt":
+                if _bridge is not None:
+                    _bridge.set_system_prompt(
+                        prompt=str(msg.get("prompt", "")),
+                    )
+
+            elif msg_type == "get_prompt_history":
+                if _bridge is not None:
+                    _bridge.get_prompt_history()
+
     except WebSocketDisconnect:
         _clients.discard(ws)
 

@@ -356,3 +356,6 @@ source install/setup.bash
 colcon build --packages-select andr skill_executor
 source install/setup.bash
 ```
+
+ ros2 launch andr andr.launch.py enable_wander:=false
+ ros2 launch andr andr.launch.py enable_wander:=falseros2 launch andr_sim robot.launch.py

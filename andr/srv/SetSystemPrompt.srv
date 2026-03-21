@@ -1,0 +1,6 @@
+# Request — set a new system prompt (old one is archived to history)
+string prompt
+---
+bool success
+string message
+int32 version

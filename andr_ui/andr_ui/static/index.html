@@ -350,6 +350,121 @@
     #slam-status-msg.success { color: #81c784; }
     #slam-status-msg.error   { color: #ef9a9a; }
     #slam-status-msg.loading { color: #ffcc80; }
+
+    /* ── Prompt management ────────────────────────────────────────── */
+    #prompt-section { margin-bottom: 14px; }
+
+    #prompt-display {
+      background: #1c1c1c;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 0.72rem;
+      font-family: 'Consolas', 'Fira Code', monospace;
+      color: #ccc;
+      max-height: 120px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 6px;
+    }
+
+    #prompt-version-label {
+      font-size: 0.7rem;
+      color: #666;
+      margin-bottom: 6px;
+    }
+
+    #prompt-editor {
+      width: 100%;
+      background: #1c1c1c;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #e0e0e0;
+      padding: 8px 10px;
+      font-size: 0.72rem;
+      font-family: 'Consolas', 'Fira Code', monospace;
+      resize: vertical;
+      outline: none;
+      min-height: 120px;
+      display: none;
+    }
+    #prompt-editor:focus { border-color: #42a5f5; }
+
+    .prompt-btn-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .prompt-btn {
+      flex: 1;
+      background: #1565c0;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 0;
+      cursor: pointer;
+      font-size: 0.75rem;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+    .prompt-btn:hover  { background: #1976d2; }
+    .prompt-btn:active { background: #0d47a1; }
+    .prompt-btn.secondary { background: #333; color: #ccc; }
+    .prompt-btn.secondary:hover { background: #444; }
+
+    #prompt-status-msg {
+      font-size: 0.72rem;
+      margin-top: 4px;
+      min-height: 14px;
+    }
+    #prompt-status-msg.success { color: #81c784; }
+    #prompt-status-msg.error   { color: #ef9a9a; }
+
+    /* ── Prompt history ───────────────────────────────────────────── */
+    #prompt-history-list {
+      max-height: 200px;
+      overflow-y: auto;
+      display: none;
+    }
+
+    .history-entry {
+      background: #181818;
+      border: 1px solid #282828;
+      border-radius: 4px;
+      padding: 6px 8px;
+      margin-bottom: 4px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .history-entry:hover { border-color: #42a5f5; }
+
+    .history-entry .he-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 3px;
+    }
+    .history-entry .he-version {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #90caf9;
+    }
+    .history-entry .he-ts {
+      font-size: 0.65rem;
+      color: #666;
+    }
+    .history-entry .he-preview {
+      font-size: 0.68rem;
+      font-family: 'Consolas', 'Fira Code', monospace;
+      color: #888;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .history-entry.active { border-color: #4caf50; background: #1a2a1a; }
+
   </style>
 </head>
 <body>
@@ -395,6 +510,22 @@
   <div class="panel" id="panel-status">
     <div class="panel-header">System Status</div>
     <div id="status-content">
+      <div class="status-section" id="prompt-section">
+        <h3>System Prompt</h3>
+        <div id="prompt-version-label">Loading...</div>
+        <div id="prompt-display">Loading prompt...</div>
+        <textarea id="prompt-editor" spellcheck="false"></textarea>
+        <div class="prompt-btn-row" id="prompt-view-btns">
+          <button class="prompt-btn" id="prompt-edit-btn">Edit</button>
+          <button class="prompt-btn secondary" id="prompt-history-btn">History</button>
+        </div>
+        <div class="prompt-btn-row" id="prompt-edit-btns" style="display:none;">
+          <button class="prompt-btn" id="prompt-save-btn">Save</button>
+          <button class="prompt-btn secondary" id="prompt-cancel-btn">Cancel</button>
+        </div>
+        <div id="prompt-status-msg"></div>
+        <div id="prompt-history-list"></div>
+      </div>
       <div class="status-section">
         <h3>Agent Config</h3>
         <div class="config-row">
@@ -533,6 +664,7 @@
       addLog('connected', 'WebSocket connected');
       requestMaps();
       requestAgentConfig();
+      requestPrompt();
     };
 
     ws.onclose = () => {
@@ -665,6 +797,20 @@
         break;
       }
 
+      case 'system_prompt': {
+        if (msg.success) {
+          currentPrompt = msg.prompt || '';
+          currentPromptVersion = msg.version || 0;
+          promptDisplay.textContent = currentPrompt;
+          promptVersionLbl.textContent = 'Version ' + currentPromptVersion +
+            (msg.timestamp ? ' — ' + new Date(msg.timestamp).toLocaleString() : '');
+        } else {
+          promptDisplay.textContent = 'Failed to load: ' + (msg.message || 'unknown error');
+          promptVersionLbl.textContent = 'Error';
+        }
+        break;
+      }
+
       case 'agent_config_result': {
         saveConfigBtn.disabled = false;
         if (msg.success) {
@@ -673,6 +819,28 @@
         } else {
           setConfigStatus(msg.message || 'Failed', 'error');
           addLog('error', 'Agent config error: ' + (msg.message || ''));
+        }
+        break;
+      }
+
+      case 'set_prompt_result': {
+        if (msg.success) {
+          setPromptStatus('Saved as v' + msg.version, 'success');
+          exitEditMode();
+          requestPrompt();
+          if (historyVisible) requestPromptHistory();
+        } else {
+          setPromptStatus('Error: ' + (msg.message || ''), 'error');
+        }
+        break;
+      }
+
+      case 'prompt_history': {
+        if (msg.success) {
+          renderPromptHistory(msg.entries || []);
+        } else {
+          promptHistoryList.innerHTML = '<span class="status-empty">Error: ' +
+            escHtml(msg.message || '') + '</span>';
         }
         break;
       }
@@ -820,6 +988,136 @@
 
     ws.send(JSON.stringify({ type: 'set_agent_config', config }));
   });
+
+  // ── Prompt management ──────────────────────────────────────────────
+  const promptDisplay    = document.getElementById('prompt-display');
+  const promptEditor     = document.getElementById('prompt-editor');
+  const promptVersionLbl = document.getElementById('prompt-version-label');
+  const promptViewBtns   = document.getElementById('prompt-view-btns');
+  const promptEditBtns   = document.getElementById('prompt-edit-btns');
+  const promptEditBtn    = document.getElementById('prompt-edit-btn');
+  const promptSaveBtn    = document.getElementById('prompt-save-btn');
+  const promptCancelBtn  = document.getElementById('prompt-cancel-btn');
+  const promptHistoryBtn = document.getElementById('prompt-history-btn');
+  const promptHistoryList = document.getElementById('prompt-history-list');
+  const promptStatusMsg  = document.getElementById('prompt-status-msg');
+
+  let currentPrompt = '';
+  let currentPromptVersion = 0;
+  let historyVisible = false;
+
+  function setPromptStatus(text, cls) {
+    promptStatusMsg.textContent = text;
+    promptStatusMsg.className = cls || '';
+  }
+
+  function requestPrompt() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'get_system_prompt' }));
+    }
+  }
+
+  function requestPromptHistory() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'get_prompt_history' }));
+    }
+  }
+
+  function enterEditMode(prefill) {
+    promptDisplay.style.display = 'none';
+    promptEditor.style.display = 'block';
+    promptViewBtns.style.display = 'none';
+    promptEditBtns.style.display = 'flex';
+    promptEditor.value = prefill !== undefined ? prefill : currentPrompt;
+    promptEditor.focus();
+    promptHistoryList.style.display = 'none';
+    historyVisible = false;
+  }
+
+  function exitEditMode() {
+    promptDisplay.style.display = 'block';
+    promptEditor.style.display = 'none';
+    promptViewBtns.style.display = 'flex';
+    promptEditBtns.style.display = 'none';
+  }
+
+  promptEditBtn.addEventListener('click', () => enterEditMode());
+
+  promptCancelBtn.addEventListener('click', () => {
+    exitEditMode();
+    setPromptStatus('', '');
+  });
+
+  promptSaveBtn.addEventListener('click', () => {
+    const newPrompt = promptEditor.value;
+    if (!newPrompt.trim()) {
+      setPromptStatus('Prompt cannot be empty', 'error');
+      return;
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'set_system_prompt', prompt: newPrompt }));
+      setPromptStatus('Saving...', '');
+    }
+  });
+
+  promptHistoryBtn.addEventListener('click', () => {
+    historyVisible = !historyVisible;
+    if (historyVisible) {
+      requestPromptHistory();
+      promptHistoryList.style.display = 'block';
+      promptHistoryBtn.textContent = 'Hide History';
+    } else {
+      promptHistoryList.style.display = 'none';
+      promptHistoryBtn.textContent = 'History';
+    }
+  });
+
+  function renderPromptHistory(entries) {
+    promptHistoryList.innerHTML = '';
+    if (!entries || entries.length === 0) {
+      promptHistoryList.innerHTML = '<span class="status-empty">No history</span>';
+      return;
+    }
+    for (const entry of entries) {
+      const el = document.createElement('div');
+      el.className = 'history-entry' + (entry.version === currentPromptVersion ? ' active' : '');
+
+      const preview = entry.prompt.length > 100
+        ? entry.prompt.substring(0, 100) + '...'
+        : entry.prompt;
+
+      const header = document.createElement('div');
+      header.className = 'he-header';
+
+      const ver = document.createElement('span');
+      ver.className = 'he-version';
+      ver.textContent = 'v' + entry.version;
+      header.appendChild(ver);
+
+      const tsEl = document.createElement('span');
+      tsEl.className = 'he-ts';
+      try {
+        tsEl.textContent = new Date(entry.timestamp).toLocaleString();
+      } catch (e) {
+        tsEl.textContent = entry.timestamp;
+      }
+      header.appendChild(tsEl);
+
+      const prev = document.createElement('div');
+      prev.className = 'he-preview';
+      prev.textContent = preview;
+
+      el.appendChild(header);
+      el.appendChild(prev);
+
+      el.addEventListener('click', () => {
+        enterEditMode(entry.prompt);
+        setPromptStatus('Loaded v' + entry.version + ' — click Save to apply', '');
+      });
+
+      promptHistoryList.appendChild(el);
+    }
+  }
 
   // ── Boot ─────────────────────────────────────────────────────────────
   connect();
