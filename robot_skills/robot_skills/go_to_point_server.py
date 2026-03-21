@@ -1,12 +1,12 @@
-"""go_to_point_server — skill that navigates to a named point on the current map.
+"""go_to_point tool — navigates to a named point on the current map.
 
 Unlike navigate_to_point (which requires both point_name and map_name),
-this skill only requires point_name. It queries map_manager/get_slam_config
+this tool only requires point_name. It queries map_manager/get_slam_config
 to determine the currently loaded map, then resolves coordinates and
 sends a Nav2 goal.
 
 Flow:
-  1. Parse params_json for point_name.
+  1. Parse params for point_name.
   2. Call map_manager/get_slam_config to get the current map name.
   3. Call map_manager/get_point_coordinates to resolve (x, y).
   4. Send a NavigateToPose goal to Nav2 (/navigate_to_pose).
@@ -16,12 +16,11 @@ Flow:
 
 import json
 import threading
+from dataclasses import dataclass
 
 import rclpy
-from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
-from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.node import Node
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
@@ -29,80 +28,61 @@ from nav2_msgs.action import NavigateToPose
 
 from andr.action import ExecuteSkill
 from andr.srv import GetPointCoordinates, GetSlamConfig
+from andr_tools import BaseAgentTool
 
 
-class GoToPointServer(Node):
-    def __init__(self):
-        super().__init__("go_to_point_server")
+class GoToPointTool(BaseAgentTool):
+    TOOL_NAME = "go_to_point"
+    TOOL_DESCRIPTION = (
+        "Navigate to a named point on the currently loaded map. "
+        "Automatically determines the active map from SLAM config."
+    )
+    TOOL_PARAMETERS = [
+        {"name": "point_name", "type": "string", "required": True,
+         "description": "Name of the saved point to navigate to"},
+    ]
+    TOOL_CATEGORY = "navigation"
+    TOOL_TAGS = ["navigation", "movement", "waypoint"]
 
-        cb_group = ReentrantCallbackGroup()
+    @dataclass
+    class ParamsType:
+        point_name: str = ""
 
-        self._action_server = ActionServer(
-            self,
-            ExecuteSkill,
-            "/skills/go_to_point",
-            execute_callback=self._execute_cb,
-            goal_callback=self._goal_cb,
-            cancel_callback=self._cancel_cb,
-            callback_group=cb_group,
-        )
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
         self._get_slam_config_client = self.create_client(
             GetSlamConfig,
             "map_manager/get_slam_config",
-            callback_group=cb_group,
+            callback_group=self._cb_group,
         )
 
         self._get_point_client = self.create_client(
             GetPointCoordinates,
             "map_manager/get_point_coordinates",
-            callback_group=cb_group,
+            callback_group=self._cb_group,
         )
 
         self._nav_client = ActionClient(
             self,
             NavigateToPose,
             "/navigate_to_pose",
-            callback_group=cb_group,
+            callback_group=self._cb_group,
         )
 
-        self.get_logger().info(
-            "GoToPointServer ready on '/skills/go_to_point'"
-        )
+        self._initial_dist = None
+        self._current_goal_handle = None
 
-    # ------------------------------------------------------------------
-    # Goal / cancel callbacks
-    # ------------------------------------------------------------------
-
-    def _goal_cb(self, goal_request) -> GoalResponse:
-        self.get_logger().info(
-            f"go_to_point goal received: {goal_request.params_json}"
-        )
-        return GoalResponse.ACCEPT
-
-    def _cancel_cb(self, goal_handle) -> CancelResponse:
-        self.get_logger().info("go_to_point cancel requested")
-        return CancelResponse.ACCEPT
-
-    # ------------------------------------------------------------------
-    # Execute callback
-    # ------------------------------------------------------------------
-
-    def _execute_cb(self, goal_handle) -> ExecuteSkill.Result:
-        params = json.loads(goal_handle.request.params_json or "{}")
-        point_name = params.get("point_name", "").strip()
-
+    def _execute(self, params: ParamsType, goal_handle) -> dict:
+        point_name = params.point_name.strip()
         if not point_name:
-            return self._fail(goal_handle, "'point_name' is required")
+            raise ValueError("'point_name' is required")
 
-        # ── 1. Get the current map from SLAM config ────────────────────
+        # ── 1. Get the current map from SLAM config ──────────────────
         self._pub_feedback(goal_handle, "Getting current map...", 0.0)
 
         if not self._get_slam_config_client.wait_for_service(timeout_sec=5.0):
-            return self._fail(
-                goal_handle,
-                "map_manager/get_slam_config service not available",
-            )
+            raise RuntimeError("map_manager/get_slam_config service not available")
 
         config_future = self._get_slam_config_client.call_async(GetSlamConfig.Request())
         config_event = threading.Event()
@@ -110,22 +90,19 @@ class GoToPointServer(Node):
         config_event.wait(timeout=10.0)
 
         if not config_future.done() or config_future.result() is None:
-            return self._fail(goal_handle, "Timed out getting SLAM config")
+            raise RuntimeError("Timed out getting SLAM config")
 
         config_resp = config_future.result()
         if not config_resp.success:
-            return self._fail(goal_handle, f"SLAM config error: {config_resp.message}")
+            raise RuntimeError(f"SLAM config error: {config_resp.message}")
 
         map_name = config_resp.map_name
         if not map_name:
-            return self._fail(
-                goal_handle,
-                "No map is currently loaded. Load a map first via the UI.",
-            )
+            raise RuntimeError("No map is currently loaded. Load a map first via the UI.")
 
         self.get_logger().info(f"Current map: '{map_name}'")
 
-        # ── 2. Resolve coordinates via map service ─────────────────────
+        # ── 2. Resolve coordinates via map service ───────────────────
         self._pub_feedback(
             goal_handle,
             f"Looking up '{point_name}' on map '{map_name}'...",
@@ -133,10 +110,7 @@ class GoToPointServer(Node):
         )
 
         if not self._get_point_client.wait_for_service(timeout_sec=5.0):
-            return self._fail(
-                goal_handle,
-                "map_manager/get_point_coordinates service not available",
-            )
+            raise RuntimeError("map_manager/get_point_coordinates service not available")
 
         req = GetPointCoordinates.Request()
         req.map_name = map_name
@@ -148,21 +122,18 @@ class GoToPointServer(Node):
         coord_event.wait(timeout=10.0)
 
         if not coord_future.done() or coord_future.result() is None:
-            return self._fail(
-                goal_handle,
-                f"Timed out waiting for coordinates of '{point_name}'",
-            )
+            raise RuntimeError(f"Timed out waiting for coordinates of '{point_name}'")
 
         coord_resp = coord_future.result()
         if not coord_resp.success:
-            return self._fail(goal_handle, coord_resp.message)
+            raise RuntimeError(coord_resp.message)
 
         x, y = coord_resp.x, coord_resp.y
         self.get_logger().info(
             f"Resolved '{point_name}' on '{map_name}' -> (x={x:.4f}, y={y:.4f})"
         )
 
-        # ── 3. Wait for Nav2 action server ─────────────────────────────
+        # ── 3. Wait for Nav2 action server ───────────────────────────
         self._pub_feedback(
             goal_handle,
             f"Waiting for Nav2... target ({x:.2f}, {y:.2f})",
@@ -170,12 +141,9 @@ class GoToPointServer(Node):
         )
 
         if not self._nav_client.wait_for_server(timeout_sec=10.0):
-            return self._fail(
-                goal_handle,
-                "/navigate_to_pose action server not available — is Nav2 running?",
-            )
+            raise RuntimeError("/navigate_to_pose action server not available — is Nav2 running?")
 
-        # ── 4. Build and send NavigateToPose goal ──────────────────────
+        # ── 4. Build and send NavigateToPose goal ────────────────────
         nav_goal = NavigateToPose.Goal()
         nav_goal.pose = PoseStamped()
         nav_goal.pose.header.frame_id = "map"
@@ -196,7 +164,7 @@ class GoToPointServer(Node):
         send_goal_event.wait(timeout=15.0)
 
         if not send_goal_future.done() or send_goal_future.result() is None:
-            return self._fail(goal_handle, "Timed out sending goal to Nav2")
+            raise RuntimeError("Timed out sending goal to Nav2")
 
         nav_goal_handle = send_goal_future.result()
         if not nav_goal_handle.accepted:
@@ -205,7 +173,7 @@ class GoToPointServer(Node):
                 f"x={x:.4f}, y={y:.4f}. "
                 f"Is bt_navigator in 'active' state? Has SLAM published /map?"
             )
-            return self._fail(goal_handle, "Nav2 rejected the navigation goal")
+            raise RuntimeError("Nav2 rejected the navigation goal")
 
         self._pub_feedback(
             goal_handle,
@@ -213,7 +181,7 @@ class GoToPointServer(Node):
             0.10,
         )
 
-        # ── 5. Wait for Nav2 result, supporting cancellation ───────────
+        # ── 5. Wait for Nav2 result, supporting cancellation ─────────
         result_event = threading.Event()
         result_future = nav_goal_handle.get_result_async()
         result_future.add_done_callback(lambda _: result_event.set())
@@ -225,12 +193,7 @@ class GoToPointServer(Node):
                 cancel_event = threading.Event()
                 cancel_future.add_done_callback(lambda _: cancel_event.set())
                 cancel_event.wait(timeout=5.0)
-                result = ExecuteSkill.Result()
-                result.success = False
-                result.result_json = json.dumps({"status": "cancelled"})
-                result.error_message = "Navigation cancelled"
-                goal_handle.canceled()
-                return result
+                return {"status": "cancelled", "point_name": point_name}
             result_event.wait(timeout=0.1)
 
         nav_result = result_future.result()
@@ -238,25 +201,18 @@ class GoToPointServer(Node):
 
         if status == GoalStatus.STATUS_SUCCEEDED:
             self._pub_feedback(goal_handle, "Arrived!", 1.0)
-            result = ExecuteSkill.Result()
-            result.success = True
-            result.result_json = json.dumps({
+            self.get_logger().info(
+                f"Arrived at '{point_name}' on map '{map_name}'"
+            )
+            return {
                 "status": "arrived",
                 "point_name": point_name,
                 "map_name": map_name,
                 "x": x,
                 "y": y,
-            })
-            result.error_message = ""
-            goal_handle.succeed()
-            self.get_logger().info(
-                f"Arrived at '{point_name}' on map '{map_name}'"
-            )
-            return result
+            }
 
-        error_msg = f"Nav2 navigation failed — status code {status}"
-        self.get_logger().warn(error_msg)
-        return self._fail(goal_handle, error_msg)
+        raise RuntimeError(f"Nav2 navigation failed — status code {status}")
 
     # ------------------------------------------------------------------
     # Nav2 feedback → skill feedback
@@ -287,19 +243,10 @@ class GoToPointServer(Node):
         fb.progress = float(max(0.0, min(1.0, progress)))
         goal_handle.publish_feedback(fb)
 
-    @staticmethod
-    def _fail(goal_handle, message: str) -> ExecuteSkill.Result:
-        result = ExecuteSkill.Result()
-        result.success = False
-        result.result_json = json.dumps({"status": "failed", "error": message})
-        result.error_message = message
-        goal_handle.abort()
-        return result
-
 
 def main(args=None):
     rclpy.init(args=args)
-    node = GoToPointServer()
+    node = GoToPointTool()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:
