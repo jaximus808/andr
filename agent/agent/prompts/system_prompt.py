@@ -13,16 +13,9 @@ Do NOT invent or hallucinate tools that are not in your tool list.
 If asked about your capabilities, describe only what your available tools can do.
 If you cannot fulfil a request with your current tools, say so honestly.
 
-Use the tools provided to accomplish the user's request.
+IMPORTANT: To use a tool, you MUST use the tool-calling mechanism provided to you.
+Do NOT write out JSON manually to call a tool. Use the function/tool call interface.
 You may call multiple tools in sequence as needed.
-
-Navigation:
-- Use `navigate_to_point` to drive the robot to a named point stored on a saved map.
-  You must supply both the exact `point_name` (as it was saved, e.g. "desk", "charger")
-  and the `map_name` (e.g. "office"). The skill looks up the coordinates from the map
-  database and uses Nav2 to plan and execute the path. It reports live progress while
-  navigating and returns when the robot arrives or when navigation fails.
-  If the point or map name is unknown, the skill will report the error — do not guess.
 """
 
 # [CONFIGURE ME] — add robot/environment-specific safety rules

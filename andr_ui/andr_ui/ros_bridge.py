@@ -34,6 +34,7 @@ from andr.srv import (
     SaveMap, SavePoint, GetMapPoints, GetMaps, SetSlamConfig, GetSlamConfig, RestartSlam,
     GetAgentConfig, SetAgentConfig,
     GetSystemPrompt, SetSystemPrompt, GetPromptHistory,
+    ListTools,
 )
 
 
@@ -112,6 +113,9 @@ class RosBridgeNode(Node):
         self._get_prompt_client = self.create_client(GetSystemPrompt, "prompt_manager/get_system_prompt")
         self._set_prompt_client = self.create_client(SetSystemPrompt, "prompt_manager/set_system_prompt")
         self._get_history_client = self.create_client(GetPromptHistory, "prompt_manager/get_prompt_history")
+
+        # ── Service client for tool_manager ──────────────────────────
+        self._list_tools_client = self.create_client(ListTools, "tool_manager/list")
 
         # ── Periodic node/action discovery (every 5s) ────────────────────
         self._discovery_timer = self.create_timer(5.0, self._discover_nodes)
@@ -607,6 +611,46 @@ class RosBridgeNode(Node):
         except Exception as e:
             self._push({"type": "prompt_history", "success": False,
                          "message": str(e), "entries": []})
+
+    # ── Tool manager ──────────────────────────────────────────────────
+
+    def get_tools(self) -> None:
+        """Fetch registered tools from tool_manager and push to UI."""
+        if not self._list_tools_client.wait_for_service(timeout_sec=2.0):
+            self._push({"type": "tools_list", "success": False,
+                         "message": "tool_manager/list service not available",
+                         "tools": []})
+            return
+
+        future = self._list_tools_client.call_async(ListTools.Request())
+        future.add_done_callback(self._on_get_tools_result)
+
+    def _on_get_tools_result(self, future) -> None:
+        try:
+            res = future.result()
+            tools = []
+            for i, name in enumerate(res.tool_names):
+                params = []
+                if i < len(res.parameters_json) and res.parameters_json[i]:
+                    try:
+                        params = json.loads(res.parameters_json[i])
+                    except json.JSONDecodeError:
+                        pass
+                tools.append({
+                    "name": name,
+                    "description": res.descriptions[i] if i < len(res.descriptions) else "",
+                    "category": res.categories[i] if i < len(res.categories) else "general",
+                    "action_server": res.action_servers[i] if i < len(res.action_servers) else "",
+                    "parameters": params,
+                })
+            self._push({
+                "type": "tools_list",
+                "success": True,
+                "tools": tools,
+            })
+        except Exception as e:
+            self._push({"type": "tools_list", "success": False,
+                         "message": str(e), "tools": []})
 
     # ── Node / action server discovery ───────────────────────────────────
 

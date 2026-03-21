@@ -73,10 +73,12 @@ class Skill:
 class SkillsRegistry:
     """Holds available robot skills and formats them for LLM injection."""
 
-    def __init__(self, skills: Optional[list[Skill]] = None):
+    def __init__(self, skills: Optional[list[Skill]] = None, *, _node=None):
         self._skills: dict[str, Skill] = {}
         for skill in (skills or []):
             self._skills[skill.name] = skill
+        self._node = _node  # kept for refresh()
+        self._list_client = None  # reused ListTools service client
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -128,7 +130,59 @@ class SkillsRegistry:
             ))
 
         logger.info("Discovered %d tool(s) from tool_manager.", len(skills))
-        return cls(skills)
+        return cls(skills, _node=node)
+
+    def refresh(self, timeout_sec: float = 5.0) -> list[str]:
+        """Re-query tool_manager/list and return names of newly added tools.
+
+        Reuses the same service client across calls to avoid ROS 2 client
+        creation overhead and potential issues with multiple clients.
+        """
+        if self._node is None:
+            return []
+
+        import json as _json
+        try:
+            from andr.srv import ListTools
+        except ImportError:
+            return []
+
+        # Create the client once, reuse thereafter
+        if self._list_client is None:
+            self._list_client = self._node.create_client(ListTools, "tool_manager/list")
+
+        if not self._list_client.wait_for_service(timeout_sec=timeout_sec):
+            logger.warning("refresh: tool_manager/list not available.")
+            return []
+
+        future = self._list_client.call_async(ListTools.Request())
+        event = threading.Event()
+        future.add_done_callback(lambda _: event.set())
+        if not event.wait(timeout=timeout_sec):
+            logger.warning("refresh: tool_manager/list timed out.")
+            return []
+
+        res = future.result()
+        logger.info(
+            "refresh: tool_manager/list returned %d tool(s): %s",
+            len(res.tool_names), list(res.tool_names),
+        )
+        new_names = []
+        for i, name in enumerate(res.tool_names):
+            if name in self._skills:
+                continue
+            params_raw = _json.loads(res.parameters_json[i]) if i < len(res.parameters_json) else []
+            self._skills[name] = Skill(
+                name=name,
+                description=res.descriptions[i] if i < len(res.descriptions) else "",
+                parameters=[SkillParameter.from_dict(p) for p in params_raw],
+                category=res.categories[i] if i < len(res.categories) else "general",
+            )
+            new_names.append(name)
+
+        if new_names:
+            logger.info("refresh: discovered %d new tool(s): %s", len(new_names), new_names)
+        return new_names
 
     # ------------------------------------------------------------------
     # Lookups
@@ -257,6 +311,22 @@ class SkillExecutor:
             return f"ERROR: {err}"
 
         # --- Send goal to skill_executor node ---
+        return self._send_goal(skill_name, args)
+
+    def execute_unchecked(self, skill_name: str, args: Optional[dict] = None) -> str:
+        """Send an ExecuteSkill goal without local registry validation.
+
+        Use this when the tool isn't in the agent's local cache but may be
+        registered with the tool_manager.  The tool_manager will reject
+        unknown tools itself.
+        """
+        args = args or {}
+
+        if self._action_client is None:
+            err = "skill_executor action client is not available."
+            logger.error("SkillExecutor: %s", err)
+            return f"ERROR: {err}"
+
         return self._send_goal(skill_name, args)
 
     def _send_goal(self, skill_name: str, args: dict) -> str:

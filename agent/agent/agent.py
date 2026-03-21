@@ -1,15 +1,12 @@
 """
-agent.py — ROS 2 Action Server that delegates to a LangChain AgentExecutor.
+agent.py — ROS 2 Action Server with a custom ReAct loop.
 
-When a goal arrives on the ``agent/prompt`` action, the server builds a
-LangChain tool-calling agent from the configured LLM and the robot's skill
-tools, then invokes it.  LangChain handles the ReAct loop (LLM → tool → LLM)
-internally until the task is solved or an error occurs.
+When a goal arrives on the ``agent/prompt`` action, the server runs a
+manual ReAct loop: send prompt to LLM → detect tool calls (structured or
+raw JSON) → execute via tool_manager → feed result back → repeat.
 
 The agent dynamically discovers available tools by calling the
-``get_available_tools`` service on the skill_executor node at startup,
-instead of loading skills.yaml directly. This means adding new tools only
-requires updating the skill_executor config — no agent changes needed.
+``tool_manager/list`` service at startup.
 
 ROS 2 parameters
 ----------------
@@ -24,6 +21,7 @@ max_iterations      int      20
 
 from __future__ import annotations
 
+import json
 import logging
 
 import rclpy
@@ -43,11 +41,56 @@ from .prompts.system_prompt import DEFAULT_SYSTEM_PROMPT
 logger = logging.getLogger(__name__)
 
 
+def _parse_raw_tool_call(text: str) -> dict | None:
+    """Try to extract a tool call from raw LLM text output.
+
+    Handles formats like:
+      {"name": "tool_name", "parameters": {...}}
+      {"name": "tool_name", "arguments": {...}}
+      {"tool": "tool_name", "params": {...}}
+    Returns {"name": str, "args": dict} or None.
+    """
+    text = text.strip()
+
+    # Try to find JSON object in the text
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+
+    json_str = text[start:end + 1]
+    try:
+        obj = json.loads(json_str)
+    except json.JSONDecodeError:
+        logger.debug("_parse_raw_tool_call: JSON parse failed for: %s", json_str[:100])
+        return None
+
+    if not isinstance(obj, dict):
+        return None
+
+    # Extract tool name
+    name = obj.get("name") or obj.get("tool") or obj.get("function")
+    if not name:
+        return None
+
+    # Extract arguments
+    args = (
+        obj.get("parameters")
+        or obj.get("arguments")
+        or obj.get("params")
+        or obj.get("args")
+        or {}
+    )
+
+    logger.info("_parse_raw_tool_call: detected tool='%s' args=%s", name, args)
+    return {"name": str(name), "args": args if isinstance(args, dict) else {}}
+
+
 def _create_langchain_llm(backend: str, model: str, host: str, temperature: float):
     """Instantiate the appropriate LangChain chat model."""
     if backend == "ollama":
         from langchain_ollama import ChatOllama
-        kwargs = {"temperature": temperature, "num_ctx": 2048, "keep_alive": "10m"}
+        kwargs = {"temperature": temperature, "num_ctx": 8192, "keep_alive": "10m"}
         if model:
             kwargs["model"] = model
         kwargs["base_url"] = host
@@ -100,9 +143,10 @@ class AgentServer(Node):
         self.get_logger().info(f"Memory: backend='{backend}' top_k={self._memory_top_k}")
 
     def _setup_skills(self) -> None:
-        self._skills = SkillsRegistry.from_tool_manager(self, timeout_sec=5.0)
+        self._skills = SkillsRegistry.from_tool_manager(self, timeout_sec=10.0)
         self.get_logger().info(
-            f"Skills: discovered {len(self._skills)} tool(s) from tool_manager."
+            f"Skills: discovered {len(self._skills)} tool(s) from tool_manager: "
+            f"{self._skills.names()}"
         )
         self._skill_executor = SkillExecutor(self._skills, self)
 
@@ -130,8 +174,6 @@ class AgentServer(Node):
         return prompt
 
     def _setup_langchain(self) -> None:
-        from langgraph.prebuilt import create_react_agent
-
         backend     = self._str("llm_backend")
         model       = self._str("llm_model")
         host        = self._str("llm_host")
@@ -149,15 +191,22 @@ class AgentServer(Node):
             memory=self._memory,
             memory_top_k=self._memory_top_k,
         )
-        self.get_logger().info(f"LangChain tools: {[t.name for t in self._tools]}")
+        self._tools_by_name = {t.name: t for t in self._tools}
+        self.get_logger().info(f"LangChain tools: {list(self._tools_by_name.keys())}")
 
-        # Cache the ReAct agent graph so it's not recreated per goal
-        self._agent = create_react_agent(
-            self._llm,
-            self._tools,
-            prompt=self._system_prompt,
-        )
-        self.get_logger().info("ReAct agent graph cached for reuse.")
+        # Bind tools to LLM (for models that support structured tool calling)
+        # If the model doesn't support it, we fall back to parsing raw JSON
+        try:
+            self._llm_with_tools = self._llm.bind_tools(self._tools)
+            self.get_logger().info("Tools bound to LLM (structured tool calling enabled).")
+        except Exception as exc:
+            self.get_logger().warn(
+                f"Could not bind tools to LLM ({exc}). "
+                "Will rely on raw JSON parsing for tool calls."
+            )
+            self._llm_with_tools = self._llm
+
+        self.get_logger().info("Agent ready (custom ReAct loop with JSON fallback).")
 
     def _setup_action_server(self) -> None:
         self._cb_group = ReentrantCallbackGroup()
@@ -252,87 +301,163 @@ class AgentServer(Node):
         return CancelResponse.ACCEPT
 
     # ------------------------------------------------------------------
-    # Execute callback — invokes LangChain AgentExecutor
+    # Execute callback — custom ReAct loop with JSON fallback
     # ------------------------------------------------------------------
 
     def _execute_cb(self, goal_handle) -> Agent.Result:
-        """Invoke the cached LangChain agent for this goal."""
-        from langchain_core.messages import HumanMessage
+        """Run a ReAct loop: LLM → tool call (structured or raw JSON) → repeat."""
+        import time as _time
+        from langchain_core.messages import (
+            AIMessage, HumanMessage, SystemMessage, ToolMessage,
+        )
 
         goal: Agent.Goal = goal_handle.request
         result = Agent.Result()
         max_iter = self.get_parameter("max_iterations").get_parameter_value().integer_value
 
-        self.get_logger().info(f"Starting LangChain agent — prompt: '{goal.prompt[:80]}'")
+        self.get_logger().info(f"Starting agent — prompt: '{goal.prompt[:80]}'")
 
-        # If runtime context is provided, prepend it to the user prompt
+        # Refresh tools from tool_manager so we always have the live set
+        new_names = self._skills.refresh()
+        if new_names:
+            self.get_logger().info(f"Discovered new tools before execution: {new_names}")
+            self._rebuild_tools()
+
+        # Build the message history
         user_content = goal.prompt
         if goal.context:
             user_content = f"[RUNTIME CONTEXT: {goal.context}]\n\n{goal.prompt}"
 
-        # Send initial feedback
-        self._send_feedback(goal_handle, 1, "thinking", "Invoking LangChain agent…", 0.1)
+        # Build tool descriptions for the system prompt
+        tool_desc_lines = []
+        for t in self._tools:
+            params = ""
+            if hasattr(t, "args_schema") and t.args_schema:
+                schema = t.args_schema.schema()
+                props = schema.get("properties", {})
+                required = set(schema.get("required", []))
+                param_parts = []
+                for pname, pinfo in props.items():
+                    req_mark = " (required)" if pname in required else " (optional)"
+                    param_parts.append(f"    - {pname}: {pinfo.get('type', 'string')}{req_mark} — {pinfo.get('description', '')}")
+                params = "\n".join(param_parts)
+            tool_desc_lines.append(f"  {t.name}: {t.description}")
+            if params:
+                tool_desc_lines.append(params)
+
+        tool_block = "\n".join(tool_desc_lines)
+
+        system_content = (
+            f"{self._system_prompt}\n\n"
+            f"=== AVAILABLE TOOLS ===\n{tool_block}\n\n"
+            f"To call a tool, respond with ONLY a JSON object in this exact format:\n"
+            f'{{"name": "<tool_name>", "parameters": {{...}}}}\n\n'
+            f"Do NOT include any other text when calling a tool — just the JSON object.\n"
+            f"When you have a final answer (no tool needed), respond with plain text."
+        )
+
+        messages = [
+            SystemMessage(content=system_content),
+            HumanMessage(content=user_content),
+        ]
+
+        self._send_feedback(goal_handle, 1, "thinking", "Processing…", 0.1)
+        t0 = _time.monotonic()
 
         try:
-            import time as _time
-            from langchain_core.messages import AIMessage, ToolMessage
-
-            # Stream through the ReAct loop so we can log each step
-            self.get_logger().info("Sending prompt to LLM — waiting for response…")
-            t0 = _time.monotonic()
-            step = 0
-            response = None
-
-            for event in self._agent.stream(
-                {"messages": [HumanMessage(content=user_content)]},
-                config={"recursion_limit": max_iter},
-                stream_mode="updates",
-            ):
+            for iteration in range(1, max_iter + 1):
                 elapsed = _time.monotonic() - t0
-                step += 1
+                self.get_logger().info(f"[{elapsed:.1f}s] ReAct iteration {iteration}/{max_iter}")
 
-                for _, update in event.items():
-                    msgs = update.get("messages", [])
-                    for msg in msgs:
-                        if isinstance(msg, AIMessage):
-                            if msg.tool_calls:
-                                for tc in msg.tool_calls:
-                                    self.get_logger().info(
-                                        f"[{elapsed:.1f}s] LLM decided to call tool: "
-                                        f"'{tc['name']}' args={tc['args']}"
-                                    )
-                                    self._send_feedback(
-                                        goal_handle, step, "tool_call",
-                                        f"Calling {tc['name']}…", 0.3,
-                                    )
-                            elif msg.content:
-                                self.get_logger().info(
-                                    f"[{elapsed:.1f}s] LLM response: {msg.content[:150]}"
-                                )
-                        elif isinstance(msg, ToolMessage):
-                            self.get_logger().info(
-                                f"[{elapsed:.1f}s] Tool '{msg.name}' returned: "
-                                f"{msg.content[:120]}"
-                            )
-                            self._send_feedback(
-                                goal_handle, step, "tool_result",
-                                f"{msg.name} done", 0.6,
-                            )
+                # Call the LLM
+                ai_response = self._llm_with_tools.invoke(messages)
 
-                    # Keep last update as response
-                    response = update
+                # Check for structured tool calls first (models that support it)
+                if hasattr(ai_response, "tool_calls") and ai_response.tool_calls:
+                    messages.append(ai_response)
+                    for tc in ai_response.tool_calls:
+                        tool_name = tc["name"]
+                        tool_args = tc["args"]
+                        elapsed = _time.monotonic() - t0
+                        self.get_logger().info(
+                            f"[{elapsed:.1f}s] Structured tool call: '{tool_name}' args={tool_args}"
+                        )
+                        self._send_feedback(
+                            goal_handle, iteration, "tool_call",
+                            f"Calling {tool_name}…", 0.3,
+                        )
 
+                        # Execute through the tool (which goes through SkillExecutor → tool_manager)
+                        tool_result = self._execute_tool(tool_name, tool_args)
+                        elapsed = _time.monotonic() - t0
+                        self.get_logger().info(
+                            f"[{elapsed:.1f}s] Tool '{tool_name}' returned: {tool_result[:120]}"
+                        )
+                        self._send_feedback(
+                            goal_handle, iteration, "tool_result",
+                            f"{tool_name}: {tool_result[:80]}", 0.6,
+                        )
+
+                        messages.append(ToolMessage(
+                            content=tool_result,
+                            tool_call_id=tc.get("id", f"call_{iteration}"),
+                        ))
+                    continue
+
+                # No structured tool call — check for raw JSON tool call in text
+                content = ai_response.content if hasattr(ai_response, "content") else str(ai_response)
+                elapsed = _time.monotonic() - t0
+                self.get_logger().info(f"[{elapsed:.1f}s] LLM text: {content[:200]}")
+
+                parsed = _parse_raw_tool_call(content)
+
+                if parsed:
+                    tool_name = parsed["name"]
+                    tool_args = parsed["args"]
+                    self.get_logger().info(
+                        f"[{elapsed:.1f}s] Parsed raw JSON tool call: "
+                        f"'{tool_name}' args={tool_args}"
+                    )
+                    self._send_feedback(
+                        goal_handle, iteration, "tool_call",
+                        f"Calling {tool_name}…", 0.3,
+                    )
+
+                    # Execute through the tool → SkillExecutor → tool_manager
+                    tool_result = self._execute_tool(tool_name, tool_args)
+                    elapsed = _time.monotonic() - t0
+                    self.get_logger().info(
+                        f"[{elapsed:.1f}s] Tool '{tool_name}' returned: {tool_result[:120]}"
+                    )
+                    self._send_feedback(
+                        goal_handle, iteration, "tool_result",
+                        f"{tool_name}: {tool_result[:80]}", 0.6,
+                    )
+
+                    # Add tool call + result to history so LLM sees what happened
+                    messages.append(AIMessage(content=content))
+                    messages.append(HumanMessage(
+                        content=f"Tool '{tool_name}' returned: {tool_result}\n\n"
+                        f"Now provide your response to the user based on this result."
+                    ))
+                    continue
+
+                # No tool call detected — this is the final answer
+                total = _time.monotonic() - t0
+                self.get_logger().info(
+                    f"[{total:.1f}s] Agent finished ({iteration} iterations): {content[:200]}"
+                )
+                self._send_feedback(goal_handle, iteration, "done", content, 1.0)
+                goal_handle.succeed()
+                result.success = True
+                result.summary = content
+                return result
+
+            # Max iterations reached
             total = _time.monotonic() - t0
-            self.get_logger().info(f"[{total:.1f}s] ReAct loop finished ({step} steps)")
-
-            # Extract final output from the last message
-            if response and "messages" in response:
-                output = response["messages"][-1].content
-            else:
-                output = "Agent completed but produced no output."
-
-            self.get_logger().info(f"Agent completed: {output[:200]}")
-            self._send_feedback(goal_handle, 2, "done", output, 1.0)
+            output = f"Agent reached max iterations ({max_iter}) without a final answer."
+            self.get_logger().warn(f"[{total:.1f}s] {output}")
+            self._send_feedback(goal_handle, max_iter, "done", output, 1.0)
             goal_handle.succeed()
             result.success = True
             result.summary = output
@@ -341,11 +466,52 @@ class AgentServer(Node):
         except Exception as exc:
             error_msg = f"Agent error: {exc}"
             self.get_logger().error(error_msg)
-            self._send_feedback(goal_handle, 2, "failed", error_msg, 1.0)
+            self._send_feedback(goal_handle, 1, "failed", error_msg, 1.0)
             goal_handle.abort()
             result.success = False
             result.summary = error_msg
             return result
+
+    def _execute_tool(self, tool_name: str, args: dict) -> str:
+        """Execute a tool by name.
+
+        If the tool exists in the local LangChain cache, use it (goes through
+        the ROS2SkillTool wrapper).  Otherwise, dispatch directly to the
+        tool_manager/execute action server — the tool_manager is the real
+        source of truth for what tools are registered.
+        """
+        tool = self._tools_by_name.get(tool_name)
+        if tool is not None:
+            try:
+                return tool.invoke(args)
+            except Exception as exc:
+                return f"ERROR: Tool '{tool_name}' failed: {exc}"
+
+        # Tool not in local cache — send directly to tool_manager.
+        # This handles the common case where tool servers registered after
+        # the agent built its LangChain tool list.
+        self.get_logger().info(
+            f"Tool '{tool_name}' not in local cache — dispatching directly "
+            f"to tool_manager/execute"
+        )
+        return self._skill_executor.execute_unchecked(tool_name, args)
+
+    def _rebuild_tools(self) -> None:
+        """Rebuild LangChain tools from the (possibly refreshed) skills registry."""
+        self._tools = create_tools_from_registry(
+            registry=self._skills,
+            executor=self._skill_executor,
+            memory=self._memory,
+            memory_top_k=self._memory_top_k,
+        )
+        self._tools_by_name = {t.name: t for t in self._tools}
+        self.get_logger().info(f"Rebuilt LangChain tools: {list(self._tools_by_name.keys())}")
+
+        # Re-bind tools to LLM for structured tool calling
+        try:
+            self._llm_with_tools = self._llm.bind_tools(self._tools)
+        except Exception:
+            self._llm_with_tools = self._llm
 
     # ------------------------------------------------------------------
     # Helpers

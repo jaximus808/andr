@@ -212,6 +212,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 if _bridge is not None:
                     _bridge.get_prompt_history()
 
+            elif msg_type == "get_tools":
+                if _bridge is not None:
+                    _bridge.get_tools()
+
     except WebSocketDisconnect:
         _clients.discard(ws)
 

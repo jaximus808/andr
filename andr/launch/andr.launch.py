@@ -15,8 +15,8 @@ ros2 launch andr andr.launch.py launch_brain:=false
 # Brain running but no autonomous wander/BT
 ros2 launch andr andr.launch.py enable_wander:=false
 
-# UI only (no brain, agent, or skills)
-ros2 launch andr andr.launch.py launch_brain:=false launch_agent:=false launch_skills:=false
+# UI only (no brain or agent)
+ros2 launch andr andr.launch.py launch_brain:=false launch_agent:=false
 
 Launch arguments
 ----------------
@@ -24,7 +24,6 @@ launch_brain        bool    true        Start the andr_brain C++ node.
 enable_wander       bool    true        Enable the behavior tree / wander loop inside the brain.
 launch_agent        bool    true        Start the agent_server Python node.
 launch_task_mgr     bool    true        Start the task_manager_server Python node.
-launch_skills       bool    true        Start skill_executor + mock skill servers.
 launch_ui           bool    true        Start the andr_ui web dashboard.
 ui_port             string  8080        Port for the andr_ui web server.
 log_level           string  info        ROS log level (debug/info/warn/error).
@@ -79,18 +78,6 @@ def _agent_node(context, *args, **kwargs) -> list:
     return [node]
 
 
-def _tool_manager_node(context, *args, **kwargs) -> list:
-    """Build the tool_manager C++ node."""
-    node = Node(
-        package="tool_manager",
-        executable="tool_manager_node",
-        name="tool_manager",
-        output="screen",
-        emulate_tty=True,
-    )
-    return [node]
-
-
 def generate_launch_description() -> LaunchDescription:
 
     args = [
@@ -103,9 +90,7 @@ def generate_launch_description() -> LaunchDescription:
                               description="Start the agent_server Python node"),
         DeclareLaunchArgument("launch_task_mgr", default_value="true",
                               description="Start the task_manager_server node"),
-        DeclareLaunchArgument("launch_skills", default_value="true",
-                              description="Start tool_manager + tool servers"),
-        DeclareLaunchArgument("launch_ui",    default_value="true",
+DeclareLaunchArgument("launch_ui",    default_value="true",
                               description="Start the andr_ui web dashboard"),
         DeclareLaunchArgument("ui_port",      default_value="8080",
                               description="Port for the andr_ui web server"),
@@ -116,8 +101,8 @@ def generate_launch_description() -> LaunchDescription:
         # ── LLM ───────────────────────────────────────────────────────
         DeclareLaunchArgument("llm_backend",     default_value="ollama",
                               description="ollama | openai"),
-        DeclareLaunchArgument("llm_model",       default_value="qwen2.5:1.5b",
-                              description="Model name (e.g. qwen2.5:1.5b, llama3.2, gpt-4o)"),
+        DeclareLaunchArgument("llm_model",       default_value="llama3.2",
+                              description="Model name (e.g. llama3.2, qwen2.5:1.5b, gpt-4o)"),
         DeclareLaunchArgument("llm_host",        default_value="http://localhost:11434"),
         DeclareLaunchArgument("llm_temperature", default_value="0.2"),
 
@@ -177,48 +162,6 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(LaunchConfiguration("launch_ui")),
     )
 
-    # ── Tool manager + tool servers ──────────────────────────────────────
-    tool_manager_node = OpaqueFunction(
-        function=_tool_manager_node,
-        condition=IfCondition(LaunchConfiguration("launch_skills")),
-    )
-
-    speak_server_node = Node(
-        package="robot_skills",
-        executable="speak_server",
-        name="speak_server",
-        output="screen",
-        emulate_tty=True,
-        condition=IfCondition(LaunchConfiguration("launch_skills")),
-    )
-
-    walk_server_node = Node(
-        package="robot_skills",
-        executable="walk_server",
-        name="walk_server",
-        output="screen",
-        emulate_tty=True,
-        condition=IfCondition(LaunchConfiguration("launch_skills")),
-    )
-
-    spin_server_node = Node(
-        package="robot_skills",
-        executable="spin_server",
-        name="spin_server",
-        output="screen",
-        emulate_tty=True,
-        condition=IfCondition(LaunchConfiguration("launch_skills")),
-    )
-
-    navigate_to_point_server_node = Node(
-        package="robot_skills",
-        executable="navigate_to_point_server",
-        name="navigate_to_point_server",
-        output="screen",
-        emulate_tty=True,
-        condition=IfCondition(LaunchConfiguration("launch_skills")),
-    )
-
     startup_msg = LogInfo(msg=[
         "\n",
         "======================================================\n",
@@ -238,6 +181,4 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         *args, startup_msg,
         brain_node, prompt_manager_node, agent_node_action, task_manager_node, ui_process,
-        tool_manager_node, speak_server_node, walk_server_node, spin_server_node,
-        navigate_to_point_server_node,
     ])
