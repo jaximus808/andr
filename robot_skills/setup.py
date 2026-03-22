@@ -21,6 +21,9 @@ setup(
             "map_server                = robot_skills.map_server:main",
             "navigate_to_point_server  = robot_skills.navigate_to_point_server:main",
             "go_to_point_server        = robot_skills.go_to_point_server:main",
+            "vision_server             = robot_skills.vision_server:main",
+            "gesture_server            = robot_skills.gesture_server:main",
+            "vision_task_bridge        = robot_skills.vision_task_bridge:main",
         ],
     },
 )

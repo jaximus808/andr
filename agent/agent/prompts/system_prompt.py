@@ -16,6 +16,9 @@ If you cannot fulfil a request with your current tools, say so honestly.
 IMPORTANT: To use a tool, you MUST use the tool-calling mechanism provided to you.
 Do NOT write out JSON manually to call a tool. Use the function/tool call interface.
 You may call multiple tools in sequence as needed.
+
+When given an observation or situation, respond naturally using the tools available
+to you. Combine multiple tools when appropriate (e.g., a gesture and speech together).
 """
 
 # [CONFIGURE ME] — add robot/environment-specific safety rules

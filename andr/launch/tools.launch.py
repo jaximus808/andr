@@ -8,16 +8,22 @@ Usage
 -----
 ros2 launch andr tools.launch.py
 ros2 launch andr tools.launch.py log_level:=debug
+ros2 launch andr tools.launch.py launch_vision:=true vlm_model:=llava
 
 Launch arguments
 ----------------
-log_level       string  info    ROS log level (debug/info/warn/error).
+log_level       string  info      ROS log level (debug/info/warn/error).
+launch_vision   bool    false     Start the vision + describe_scene servers.
+vlm_backend     string  ollama    VLM backend: ollama | openai.
+vlm_model       string  llava     Vision-language model name.
+vlm_host        string  http://localhost:11434  Ollama server URL.
 """
 
 from __future__ import annotations
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, LogInfo
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -30,6 +36,22 @@ def generate_launch_description() -> LaunchDescription:
             default_value="info",
             choices=["debug", "info", "warn", "error"],
             description="ROS log level for all nodes",
+        ),
+        DeclareLaunchArgument(
+            "launch_vision", default_value="false",
+            description="Start the vision + describe_scene + gesture servers",
+        ),
+        DeclareLaunchArgument(
+            "vlm_backend", default_value="ollama",
+            description="VLM backend: ollama | openai",
+        ),
+        DeclareLaunchArgument(
+            "vlm_model", default_value="llava",
+            description="Vision-language model name",
+        ),
+        DeclareLaunchArgument(
+            "vlm_host", default_value="http://localhost:11434",
+            description="Ollama server URL",
         ),
     ]
 
@@ -101,6 +123,42 @@ def generate_launch_description() -> LaunchDescription:
         arguments=ros_args,
     )
 
+    # ── Vision + Gesture servers (optional) ─────────────────────────
+    vision_server_node = Node(
+        package="robot_skills",
+        executable="vision_server",
+        name="vision_server",
+        output="screen",
+        emulate_tty=True,
+        arguments=ros_args,
+        parameters=[{
+            "vlm_backend": LaunchConfiguration("vlm_backend"),
+            "vlm_model": LaunchConfiguration("vlm_model"),
+            "vlm_host": LaunchConfiguration("vlm_host"),
+        }],
+        condition=IfCondition(LaunchConfiguration("launch_vision")),
+    )
+
+    gesture_server_node = Node(
+        package="robot_skills",
+        executable="gesture_server",
+        name="gesture_server",
+        output="screen",
+        emulate_tty=True,
+        arguments=ros_args,
+        condition=IfCondition(LaunchConfiguration("launch_vision")),
+    )
+
+    vision_task_bridge_node = Node(
+        package="robot_skills",
+        executable="vision_task_bridge",
+        name="vision_task_bridge",
+        output="screen",
+        emulate_tty=True,
+        arguments=ros_args,
+        condition=IfCondition(LaunchConfiguration("launch_vision")),
+    )
+
     startup_msg = LogInfo(msg=[
         "\n",
         "======================================================\n",
@@ -112,6 +170,9 @@ def generate_launch_description() -> LaunchDescription:
         "  navigate_to_point     /tools/navigate_to_point\n",
         "  go_to_point           /tools/go_to_point\n",
         "  map_server            /tools/map\n",
+        "  vision_server         /tools/describe_scene  (if launch_vision)\n",
+        "  gesture_server        /tools/gesture          (if launch_vision)\n",
+        "  vision_task_bridge    scene → task_manager    (if launch_vision)\n",
         "======================================================\n",
     ])
 
@@ -125,4 +186,7 @@ def generate_launch_description() -> LaunchDescription:
         navigate_to_point_server_node,
         go_to_point_server_node,
         map_server_node,
+        vision_server_node,
+        gesture_server_node,
+        vision_task_bridge_node,
     ])
