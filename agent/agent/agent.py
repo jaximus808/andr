@@ -23,12 +23,16 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 
 import rclpy
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
+from std_msgs.msg import String
 
 from andr.action import Agent
 from andr.srv import GetAgentConfig, SetAgentConfig, GetSystemPrompt
@@ -122,6 +126,7 @@ class AgentServer(Node):
         self._setup_langchain()
         self._setup_action_server()
         self._setup_config_services()
+        self._setup_vision_subscription()
 
     # ------------------------------------------------------------------
     # Setup
@@ -135,6 +140,7 @@ class AgentServer(Node):
         self.declare_parameter("memory_backend",   "chroma")
         self.declare_parameter("memory_top_k",     4)
         self.declare_parameter("max_iterations",   20)
+        self.declare_parameter("scene_topic",      "/vision/scene")
 
     def _setup_memory(self) -> None:
         backend = self._str("memory_backend")
@@ -232,6 +238,31 @@ class AgentServer(Node):
         )
         self.get_logger().info("Agent config services ready (agent/get_config, agent/set_config)")
 
+    def _setup_vision_subscription(self) -> None:
+        """Subscribe to the vision scene topic for automatic visual context."""
+        self._latest_scene: str = ""
+        self._scene_lock = threading.Lock()
+
+        scene_topic = self._str("scene_topic")
+        qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self._scene_sub = self.create_subscription(
+            String, scene_topic, self._scene_cb, qos,
+        )
+        self.get_logger().info(f"Subscribed to vision scene topic: {scene_topic}")
+
+    def _scene_cb(self, msg: String) -> None:
+        with self._scene_lock:
+            self._latest_scene = msg.data
+
+    def _get_latest_scene(self) -> str:
+        """Thread-safe access to the latest scene description."""
+        with self._scene_lock:
+            return self._latest_scene
+
     def _handle_get_config(self, _req, res):
         res.llm_backend = self._str("llm_backend")
         res.llm_model = self._str("llm_model")
@@ -327,6 +358,14 @@ class AgentServer(Node):
         user_content = goal.prompt
         if goal.context:
             user_content = f"[RUNTIME CONTEXT: {goal.context}]\n\n{goal.prompt}"
+
+        # Inject latest vision context if available
+        scene = self._get_latest_scene()
+        if scene:
+            user_content = (
+                f"[VISION — what the robot currently sees: {scene}]\n\n"
+                f"{user_content}"
+            )
 
         # Build tool descriptions for the system prompt
         tool_desc_lines = []
