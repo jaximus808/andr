@@ -1,14 +1,14 @@
-"""navigate_to_point tool — navigates to a named point on a specified map.
+"""navigate_to_point tool — navigates to a named point on the current map.
 
 Flow:
-  1. Parse params for point_name and map_name.
-  2. Call map_manager/get_point_coordinates to resolve (x, y).
-  3. Send a NavigateToPose goal to Nav2 (/navigate_to_pose).
-  4. Forward Nav2 feedback (distance_remaining) as ExecuteSkill progress.
-  5. Return success/failure result.
+  1. Parse params for point_name.
+  2. Call map_manager/get_slam_config to get the currently loaded map.
+  3. Call map_manager/get_point_coordinates to resolve (x, y).
+  4. Send a NavigateToPose goal to Nav2 (/navigate_to_pose).
+  5. Forward Nav2 feedback (distance_remaining) as ExecuteSkill progress.
+  6. Return success/failure result.
 """
 
-import json
 import threading
 from dataclasses import dataclass
 
@@ -21,21 +21,19 @@ from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 
 from andr.action import ExecuteSkill
-from andr.srv import GetPointCoordinates
+from andr.srv import GetPointCoordinates, GetSlamConfig
 from andr_tools import BaseAgentTool
 
 
 class NavigateToPointTool(BaseAgentTool):
     TOOL_NAME = "navigate_to_point"
     TOOL_DESCRIPTION = (
-        "Navigate to a named point on a specified map. "
-        "Requires both the point name and the map name."
+        "Navigate to a named point on the currently loaded map. "
+        "Automatically determines the active map from SLAM config."
     )
     TOOL_PARAMETERS = [
         {"name": "point_name", "type": "string", "required": True,
          "description": "Name of the saved point to navigate to"},
-        {"name": "map_name", "type": "string", "required": True,
-         "description": "Name of the map containing the point"},
     ]
     TOOL_CATEGORY = "navigation"
     TOOL_TAGS = ["navigation", "movement", "waypoint"]
@@ -43,10 +41,15 @@ class NavigateToPointTool(BaseAgentTool):
     @dataclass
     class ParamsType:
         point_name: str = ""
-        map_name: str = ""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+        self._get_slam_config_client = self.create_client(
+            GetSlamConfig,
+            "map_manager/get_slam_config",
+            callback_group=self._cb_group,
+        )
 
         self._get_point_client = self.create_client(
             GetPointCoordinates,
@@ -66,16 +69,38 @@ class NavigateToPointTool(BaseAgentTool):
 
     def _execute(self, params: ParamsType, goal_handle) -> dict:
         point_name = params.point_name.strip()
-        map_name = params.map_name.strip()
+        if not point_name:
+            raise ValueError("'point_name' is required")
 
-        if not point_name or not map_name:
-            raise ValueError("Both 'point_name' and 'map_name' are required")
+        # ── 1. Get the current map from SLAM config ──────────────────
+        self._pub_feedback(goal_handle, "Getting current map...", 0.0)
 
-        # ── 1. Resolve coordinates via map service ───────────────────
+        if not self._get_slam_config_client.wait_for_service(timeout_sec=5.0):
+            raise RuntimeError("map_manager/get_slam_config service not available")
+
+        config_future = self._get_slam_config_client.call_async(GetSlamConfig.Request())
+        config_event = threading.Event()
+        config_future.add_done_callback(lambda _: config_event.set())
+        config_event.wait(timeout=10.0)
+
+        if not config_future.done() or config_future.result() is None:
+            raise RuntimeError("Timed out getting SLAM config")
+
+        config_resp = config_future.result()
+        if not config_resp.success:
+            raise RuntimeError(f"SLAM config error: {config_resp.message}")
+
+        map_name = config_resp.map_name
+        if not map_name:
+            raise RuntimeError("No map is currently loaded. Load a map first via the UI.")
+
+        self.get_logger().info(f"Current map: '{map_name}'")
+
+        # ── 2. Resolve coordinates via map service ───────────────────
         self._pub_feedback(
             goal_handle,
             f"Looking up '{point_name}' on map '{map_name}'...",
-            0.0,
+            0.05,
         )
 
         if not self._get_point_client.wait_for_service(timeout_sec=5.0):
@@ -102,7 +127,7 @@ class NavigateToPointTool(BaseAgentTool):
             f"Resolved '{point_name}' on '{map_name}' -> ({x:.3f}, {y:.3f})"
         )
 
-        # ── 2. Wait for Nav2 action server ───────────────────────────
+        # ── 3. Wait for Nav2 action server ───────────────────────────
         self._pub_feedback(
             goal_handle,
             f"Waiting for Nav2... target ({x:.2f}, {y:.2f})",
@@ -112,7 +137,7 @@ class NavigateToPointTool(BaseAgentTool):
         if not self._nav_client.wait_for_server(timeout_sec=10.0):
             raise RuntimeError("/navigate_to_pose action server not available — is Nav2 running?")
 
-        # ── 3. Build and send NavigateToPose goal ────────────────────
+        # ── 4. Build and send NavigateToPose goal ────────────────────
         nav_goal = NavigateToPose.Goal()
         nav_goal.pose = PoseStamped()
         nav_goal.pose.header.frame_id = "map"
@@ -145,7 +170,7 @@ class NavigateToPointTool(BaseAgentTool):
             0.05,
         )
 
-        # ── 4. Wait for Nav2 result, supporting cancellation ─────────
+        # ── 5. Wait for Nav2 result, supporting cancellation ─────────
         result_event = threading.Event()
         result_future = nav_goal_handle.get_result_async()
         result_future.add_done_callback(lambda _: result_event.set())

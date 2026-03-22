@@ -138,15 +138,6 @@ def generate_launch_description():
         }],
     )
 
-    # ── Go-to-point skill server ──────────────────────────────────────────
-    go_to_point = Node(
-        package="robot_skills",
-        executable="go_to_point_server",
-        name="go_to_point_server",
-        output="screen",
-        parameters=[{"use_sim_time": True}],
-    )
-
     # ── Nav2 navigation stack ─────────────────────────────────────────────
     # Uses nav2_bringup's navigation.launch.py which manages:
     #   planner_server, controller_server, behavior_server,
@@ -204,7 +195,6 @@ def generate_launch_description():
         slam_mapping,
         slam_localization,
         map_server,
-        go_to_point,
         nav2,
         rviz,
     ])

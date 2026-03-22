@@ -105,15 +105,6 @@ def generate_launch_description() -> LaunchDescription:
         arguments=ros_args,
     )
 
-    go_to_point_server_node = Node(
-        package="robot_skills",
-        executable="go_to_point_server",
-        name="go_to_point_server",
-        output="screen",
-        emulate_tty=True,
-        arguments=ros_args,
-    )
-
     map_server_node = Node(
         package="robot_skills",
         executable="map_server",
@@ -168,7 +159,6 @@ def generate_launch_description() -> LaunchDescription:
         "  walk_server           /tools/walk\n",
         "  spin_server           /tools/spin\n",
         "  navigate_to_point     /tools/navigate_to_point\n",
-        "  go_to_point           /tools/go_to_point\n",
         "  map_server            /tools/map\n",
         "  vision_server         /tools/describe_scene  (if launch_vision)\n",
         "  gesture_server        /tools/gesture          (if launch_vision)\n",
@@ -184,7 +174,6 @@ def generate_launch_description() -> LaunchDescription:
         walk_server_node,
         spin_server_node,
         navigate_to_point_server_node,
-        go_to_point_server_node,
         map_server_node,
         vision_server_node,
         gesture_server_node,
