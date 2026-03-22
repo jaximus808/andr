@@ -82,24 +82,70 @@ sensors or tools. Tool descriptions come from the tool registry at runtime.
 | `andr_ui` | Python | Web UI (FastAPI + WebSocket bridge to ROS) |
 | `prompt_manager` | Python | System prompt versioning and serving |
 
-## Adding a New Capability
+## Base Classes (andr_tools package)
 
-1. Create a new action server in `robot_skills/` (follow existing patterns like `speak_server.py`)
+The `andr_tools` package provides two base classes that standardize both sides
+of the agent pipeline:
+
+### BaseAgentTool — output side (tools the agent can call)
+Subclass to create a tool that auto-registers with tool_manager.
+Override `_execute(params, goal_handle)` with your tool logic.
+
+```python
+from andr_tools import BaseAgentTool
+
+class SpeakTool(BaseAgentTool):
+    TOOL_NAME = "speak"
+    TOOL_DESCRIPTION = "Text-to-speech via robot speaker"
+    TOOL_PARAMETERS = [{"name": "text", "type": "string", "required": True, ...}]
+
+    def _execute(self, params, goal_handle):
+        return {"status": "done"}
+```
+
+### BaseInputSource — input side (things that send tasks to the agent)
+Subclass to create an input source that sends tasks through the task_manager
+pipeline. Override `send_task(prompt, context)` is your main API. Override
+the `on_task_*` hooks for lifecycle events.
+
+```python
+from andr_tools import BaseInputSource
+
+class SmsInput(BaseInputSource):
+    SOURCE_NAME = "sms"
+    SOURCE_DESCRIPTION = "Receives tasks via text message"
+
+    def __init__(self):
+        super().__init__()
+        # set up your subscription / listener here
+        self.create_subscription(String, "/sms/incoming", self._on_sms, 10)
+
+    def _on_sms(self, msg):
+        self.send_task(prompt=msg.data, context="sms_message")
+```
+
+Available hooks: `on_task_accepted`, `on_task_rejected`, `on_task_completed`,
+`on_task_feedback`. The `is_busy` property tells you if a task is in-flight.
+
+## Adding a New Capability (tool)
+
+1. Create a new action server in `robot_skills/` subclassing `BaseAgentTool`
 2. Register the entry point in `robot_skills/setup.py`
 3. Add the node to the appropriate launch file in `andr/launch/`
 4. The tool auto-registers with tool_manager — the agent discovers it at runtime
 
 Do NOT modify agent.py, the system prompt, or any agent code to support new tools.
 
-## Adding a New Input Source (sensor, API, etc.)
+## Adding a New Input Source (sensor, API, scheduled task, etc.)
 
 1. Create a perception node if needed (processes raw data into structured output)
-2. Create a bridge node that subscribes to the perception output
-3. The bridge sends tasks through `/task_manager/execute` (ActionClient to TaskGoal)
-4. Add the bridge to the launch file with an appropriate condition flag
+2. Create a bridge node subclassing `BaseInputSource` from `andr_tools`
+3. In the bridge, call `self.send_task(prompt, context)` — it handles the full
+   task_manager lifecycle (send, feedback, result)
+4. Register the entry point and add to the launch file
 
 Do NOT subscribe to sensor topics from agent.py. Do NOT inject sensor data
-into the agent's prompt directly.
+into the agent's prompt directly. Always go through `BaseInputSource.send_task()`.
 
 ## Build & Run
 
