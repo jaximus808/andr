@@ -149,6 +149,16 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(LaunchConfiguration("launch_vision")),
     )
 
+    vision_task_bridge_node = Node(
+        package="robot_skills",
+        executable="vision_task_bridge",
+        name="vision_task_bridge",
+        output="screen",
+        emulate_tty=True,
+        arguments=ros_args,
+        condition=IfCondition(LaunchConfiguration("launch_vision")),
+    )
+
     startup_msg = LogInfo(msg=[
         "\n",
         "======================================================\n",
@@ -162,6 +172,7 @@ def generate_launch_description() -> LaunchDescription:
         "  map_server            /tools/map\n",
         "  vision_server         /tools/describe_scene  (if launch_vision)\n",
         "  gesture_server        /tools/gesture          (if launch_vision)\n",
+        "  vision_task_bridge    scene → task_manager    (if launch_vision)\n",
         "======================================================\n",
     ])
 
@@ -177,4 +188,5 @@ def generate_launch_description() -> LaunchDescription:
         map_server_node,
         vision_server_node,
         gesture_server_node,
+        vision_task_bridge_node,
     ])
