@@ -56,14 +56,25 @@ class BaseAgentTool(Node):
     Subclasses **must** define:
         TOOL_NAME          — unique tool identifier (snake_case)
         TOOL_DESCRIPTION   — human-readable description
-        TOOL_PARAMETERS    — list of param dicts [{name, type, required, description}]
         _execute(params, goal_handle) — implementation returning a dict result
 
     Subclasses **may** define:
+        TOOL_PARAMETERS    — list of param dicts [{name, type, required, description}]
+                             (auto-derived from ParamsType if omitted)
         TOOL_CATEGORY      — category string (default "general")
         TOOL_TAGS          — list of tag strings (default [])
         ParamsType         — dataclass for typed parameter conversion
     """
+
+    # ── Python → JSON-schema type mapping ─────────────────────────────────
+    _TYPE_MAP: ClassVar[dict[type, str]] = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        dict: "object",
+    }
 
     # ── Class-level config (override in subclass) ─────────────────────────
     TOOL_NAME: ClassVar[str] = ""
@@ -74,6 +85,47 @@ class BaseAgentTool(Node):
 
     # Optional: subclass can define a dataclass for typed params
     ParamsType: ClassVar[Optional[type]] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # Auto-derive TOOL_PARAMETERS from ParamsType when not explicitly set
+        if (
+            not cls.__dict__.get("TOOL_PARAMETERS")
+            and cls.__dict__.get("ParamsType") is not None
+            and dataclasses.is_dataclass(cls.ParamsType)
+        ):
+            cls.TOOL_PARAMETERS = cls._derive_tool_parameters(cls.ParamsType)
+
+    @classmethod
+    def _derive_tool_parameters(cls, params_type: type) -> list[dict]:
+        """Introspect a dataclass and return a TOOL_PARAMETERS list."""
+        params: list[dict] = []
+        for f in dataclasses.fields(params_type):
+            # Determine JSON-schema type string
+            annotation = f.type
+            if isinstance(annotation, str):
+                # Resolve string annotations (e.g. from __future__ annotations)
+                _builtins = {"str": str, "int": int, "float": float,
+                             "bool": bool, "list": list, "dict": dict}
+                annotation = _builtins.get(annotation, annotation)
+            type_str = cls._TYPE_MAP.get(annotation, "string")
+
+            # Determine if required (no default value)
+            required = (
+                f.default is dataclasses.MISSING
+                and f.default_factory is dataclasses.MISSING
+            )
+
+            # Get description from field metadata, fall back to field name
+            description = f.metadata.get("description", f.name) if f.metadata else f.name
+
+            params.append({
+                "name": f.name,
+                "type": type_str,
+                "required": required,
+                "description": description,
+            })
+        return params
 
     def __init__(self, **kwargs: Any):
         if not self.TOOL_NAME:
