@@ -28,9 +28,9 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import PoseWithCovarianceStamped
 
-from andr.msg import Prompt, RobotSpeech
-from andr.action import TaskGoal
-from andr.srv import (
+from andr_msgs.msg import Prompt, RobotSpeech
+from andr_msgs.action import TaskGoal
+from andr_msgs.srv import (
     SaveMap, SavePoint, GetMapPoints, GetMaps, SetSlamConfig, GetSlamConfig, RestartSlam,
     GetAgentConfig, SetAgentConfig,
     GetSystemPrompt, SetSystemPrompt, GetPromptHistory,

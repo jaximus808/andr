@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>andr_launch</name>
+  <version>0.0.0</version>
+  <description>Default launch files for the full ANDR stack.</description>
+  <maintainer email="jaximus808@gmail.com">observer</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <exec_depend>andr_msgs</exec_depend>
+  <exec_depend>andr_brain</exec_depend>
+  <exec_depend>agent</exec_depend>
+  <exec_depend>task_manager</exec_depend>
+  <exec_depend>tool_manager</exec_depend>
+  <exec_depend>andr_nav</exec_depend>
+  <exec_depend>andr_skills</exec_depend>
+  <exec_depend>andr_ui</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

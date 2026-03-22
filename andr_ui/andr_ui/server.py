@@ -141,7 +141,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 continue
 
             msg_type = msg.get("type")
-
+            print(f"Received message: {msg}")
             if msg_type == "prompt":
                 text    = str(msg.get("text", "")).strip()
                 context = str(msg.get("context", ""))

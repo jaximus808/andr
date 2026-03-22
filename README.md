@@ -359,3 +359,22 @@ source install/setup.bash
 
  ros2 launch andr andr.launch.py enable_wander:=false
  ros2 launch andr andr.launch.py enable_wander:=falseros2 launch andr_sim robot.launch.py
+
+## Running 
+In three terminals
+Start them in that order — sim first (so nav2/SLAM are up), then tools (so they register with tool_manager), then core (so the agent finds all the tools).
+```
+  
+  # Terminal 1 — Sim (Gazebo + Nav2 + SLAM)
+
+
+  ros2 launch andr_sim robot.launch.py
+  # Terminal 2 — Tools (tool_manager + all skill servers)
+
+
+  ros2 launch andr_launch tools.launch.py
+  # Terminal 3 — Core (brain, agent, task_manager, prompt_manager, UI)
+
+
+  ros2 launch andr_launch andr.launch.py
+  

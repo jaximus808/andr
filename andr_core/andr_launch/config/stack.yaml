@@ -1,0 +1,95 @@
+# stack.yaml — Full ANDR stack configuration
+#
+# Used by: ros2 launch andr_brain stack.launch.py
+#          ros2 launch andr_brain stack.launch.py config:=/path/to/custom.yaml
+#
+# Each section can be toggled with `enabled: true/false`.
+# Parameters under each node are passed as ROS 2 parameters.
+
+# ─── Global settings ─────────────────────────────────────────────────────────
+log_level: info
+
+# ─── LLM configuration (shared by agent) ─────────────────────────────────────
+llm:
+  backend: ollama
+  model: qwen2.5:3b
+  host: http://localhost:11434
+  temperature: 0.2
+
+# ─── Core infrastructure ─────────────────────────────────────────────────────
+core:
+  brain:
+    enabled: true
+    params:
+      enable_wander: false         # BT wander loop — not ready yet
+
+  task_manager:
+    enabled: true
+
+  agent:
+    enabled: true
+    params:
+      memory_backend: chroma
+      memory_top_k: 4
+      max_iterations: 20
+
+  prompt_manager:
+    enabled: true
+
+  tool_manager:
+    enabled: true
+
+  ui:
+    enabled: true
+    port: "8080"
+
+# ─── Tools (each is a BaseAgentTool action server) ────────────────────────────
+tools:
+  speak:
+    enabled: true
+    package: andr_skills
+    executable: speak_server
+
+  walk:
+    enabled: true
+    package: andr_nav
+    executable: walk_server
+
+  spin:
+    enabled: true
+    package: andr_nav
+    executable: spin_server
+
+  navigate_to_point:
+    enabled: true
+    package: andr_nav
+    executable: navigate_to_point_server
+
+  map:
+    enabled: true
+    package: andr_nav
+    executable: map_server
+
+  gesture:
+    enabled: true
+    package: andr_skills
+    executable: gesture_server
+
+  vision:
+    enabled: false                 # VLM tool — not ready yet
+    package: andr_skills
+    executable: vision_server
+    params:
+      vlm_backend: ollama
+      vlm_model: llava
+      vlm_host: http://localhost:11434
+
+# ─── Input sources (each is a BaseInputSource bridge) ─────────────────────────
+inputs:
+  vision_bridge:
+    enabled: false                 # VLM bridge — not ready yet
+    package: andr_skills
+    executable: vision_task_bridge
+    params:
+      scene_topic: /vision/scene
+      cooldown_sec: 10.0

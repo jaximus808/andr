@@ -6,6 +6,23 @@ ANDR is a ROS 2 robotics toolkit where an LLM agent controls a robot through
 modular, decoupled layers. Every capability the robot has is exposed as a **tool**
 registered with the tool_manager. The agent is just one consumer of the task pipeline.
 
+## Repository Structure
+
+```
+andr/                          # repo root
+  andr_msgs/                   # ROS 2 messages, services, actions
+  andr_core/                   # Core framework packages
+    agent/                     # LLM agent with ReAct loop, memory, prompt management
+    task_manager/              # Routes tasks from any input source to the agent
+    tool_manager/              # C++ — discovers and dispatches tool calls to skill servers
+    andr_tools/                # Base classes: BaseAgentTool, BaseInputSource
+    andr_brain/                # C++ behavior tree brain, wander planner, launch files
+  andr_nav/                    # Navigation tools: walk, spin, navigate_to_point, map_server
+  andr_skills/                 # Non-nav tools: speak, gesture, vision
+  andr_ui/                     # Web UI (FastAPI + WebSocket bridge to ROS)
+  andr_sim/                    # Gazebo simulation: URDF, worlds, nav2/slam config
+```
+
 ## Architecture — Strict Layer Separation
 
 ```
@@ -32,10 +49,10 @@ registered with the tool_manager. The agent is just one consumer of the task pip
 │  │  (skill registry)   │  Dispatches to skill servers    │
 │  └──────────┬──────────┘                                 │
 │             ▼                                            │
-│  ┌─────────────────────┐                                 │
-│  │    robot_skills      │  speak, walk, gesture, etc.     │
-│  │  (action servers)   │  Each is an independent node    │
-│  └─────────────────────┘                                 │
+│  ┌───────────────────────────────────────────────┐       │
+│  │  andr_nav / andr_skills / your custom tools    │       │
+│  │  (action servers)   Each is an independent node│       │
+│  └───────────────────────────────────────────────┘       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -72,15 +89,18 @@ sensors or tools. Tool descriptions come from the tool registry at runtime.
 
 ## Package Overview
 
-| Package | Language | Role |
-|---|---|---|
-| `andr` | C++ | Core: messages, actions, services, launch files, behavior tree |
-| `agent` | Python | LLM agent with ReAct loop, memory, prompt management |
-| `task_manager` | Python | Routes tasks from any input source to the agent |
-| `tool_manager` | C++ | Discovers and dispatches tool calls to skill servers |
-| `robot_skills` | Python | Individual tool servers (speak, walk, vision, gesture, etc.) |
-| `andr_ui` | Python | Web UI (FastAPI + WebSocket bridge to ROS) |
-| `prompt_manager` | Python | System prompt versioning and serving |
+| Package | Location | Language | Role |
+|---|---|---|---|
+| `andr_msgs` | `andr_msgs/` | C++ (rosidl) | All message, service, and action definitions |
+| `agent` | `andr_core/agent/` | Python | LLM agent with ReAct loop, memory, prompt management |
+| `task_manager` | `andr_core/task_manager/` | Python | Routes tasks from any input source to the agent |
+| `tool_manager` | `andr_core/tool_manager/` | C++ | Discovers and dispatches tool calls to skill servers |
+| `andr_tools` | `andr_core/andr_tools/` | Python | Base classes: BaseAgentTool, BaseInputSource |
+| `andr_brain` | `andr_core/andr_brain/` | C++ | Behavior tree brain, wander planner, launch files |
+| `andr_nav` | `andr_nav/` | Python | Navigation tools (walk, spin, navigate_to_point, map_server) |
+| `andr_skills` | `andr_skills/` | Python | Non-navigation tools (speak, gesture, vision) |
+| `andr_ui` | `andr_ui/` | Python | Web UI (FastAPI + WebSocket bridge to ROS) |
+| `andr_sim` | `andr_sim/` | C++ | Gazebo simulation (URDF, worlds, nav2/slam config) |
 
 ## Base Classes (andr_tools package)
 
@@ -129,10 +149,12 @@ Available hooks: `on_task_accepted`, `on_task_rejected`, `on_task_completed`,
 
 ## Adding a New Capability (tool)
 
-1. Create a new action server in `robot_skills/` subclassing `BaseAgentTool`
-2. Register the entry point in `robot_skills/setup.py`
-3. Add the node to the appropriate launch file in `andr/launch/`
-4. The tool auto-registers with tool_manager — the agent discovers it at runtime
+1. Create a new action server subclassing `BaseAgentTool`
+2. Put it in `andr_nav/` (if navigation-related) or `andr_skills/` (otherwise),
+   or in your own package (e.g., `andr_bot/`)
+3. Register the entry point in the package's `setup.py`
+4. Add the node to the appropriate launch file or `stack.yaml`
+5. The tool auto-registers with tool_manager — the agent discovers it at runtime
 
 Do NOT modify agent.py, the system prompt, or any agent code to support new tools.
 
@@ -155,11 +177,14 @@ colcon build --symlink-install
 source install/setup.bash
 
 # Launch everything
-ros2 launch andr tools.launch.py launch_vision:=true
-ros2 launch andr andr.launch.py
+ros2 launch andr_launch tools.launch.py launch_vision:=true
+ros2 launch andr_launch andr.launch.py
+
+# Config-driven launch
+ros2 launch andr_launch stack.launch.py
 
 # Or individual nodes
-ros2 run robot_skills speak_server
+ros2 run andr_skills speak_server
 ros2 run agent agent
 ```
 
@@ -173,3 +198,12 @@ ros2 run agent agent
 | Tool listing | Service | `tool_manager/list` |
 | System prompt | Service | `prompt_manager/get_system_prompt` |
 | Vision scene | Topic | `/vision/scene` (std_msgs/String) |
+
+## Message types are in `andr_msgs`
+
+All imports use `andr_msgs` (not `andr`):
+```python
+from andr_msgs.action import ExecuteSkill, TaskGoal, Agent
+from andr_msgs.srv import RegisterTool, ListTools, SaveMap
+from andr_msgs.msg import Prompt, RobotSpeech
+```

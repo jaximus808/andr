@@ -123,7 +123,7 @@ def generate_launch_description():
 
     # ── Map manager node (ANDR custom) ────────────────────────────────────
     map_server = Node(
-        package="robot_skills",
+        package="andr_nav",
         executable="map_server",
         name="map_server",
         output="screen",
