@@ -1,380 +1,254 @@
-# ANDR — Robot Stack
+<p align="center">
+  <h1 align="center">ANDR</h1>
+  <p align="center">LLM agent framework for robotics, built on ROS 2</p>
+</p>
 
-A ROS 2 (Humble) robot stack with an autonomous LLM agent (LangChain + LangGraph), skill execution pipeline, task manager, and a live web dashboard.
-
----
-
-## Current State
-
-- **Brain**: C++ BehaviorTree node with an idle wander loop that picks random skills. Can be disabled at launch with `enable_wander:=false`.
-- **Agent**: LangChain ReAct agent (via `langgraph`) served as a ROS 2 action server. Connects to Ollama (local) or OpenAI. Tools are auto-generated from `skills.yaml`.
-- **Task Manager**: Bridges the web UI to the agent — accepts prompts, forwards to `/agent/prompt`, relays results back.
-- **Skill Executor**: C++ config-driven router that dispatches `ExecuteSkill` actions to the correct hardware skill server based on `skill_executor_config.yaml`. Currently routes `speak` and `walk`.
-- **Robot Skills**: Mock action servers for `speak` (TTS) and `walk`. Map management service for saving/loading SLAM maps. Placeholder for real hardware drivers.
-- **Map Manager**: Service node that saves the current SLAM occupancy grid + pose graph to disk, lists saved maps, and supports switching to localization mode via launch args.
-- **Web UI**: FastAPI + WebSocket dashboard at `http://localhost:8080` — chat interface, event log, and system status panel showing active nodes/action servers.
+<p align="center">
+  <a href="#quickstart">Quickstart</a> &nbsp;&bull;&nbsp;
+  <a href="#custom-tools">Custom Tools</a> &nbsp;&bull;&nbsp;
+  <a href="#custom-input-sources">Custom Input Sources</a> &nbsp;&bull;&nbsp;
+  <a href="#architecture">Architecture</a> &nbsp;&bull;&nbsp;
+  <a href="andr_core/README.md">Building from Source</a>
+</p>
 
 ---
 
-## Package Overview
+ANDR lets an LLM agent control a robot through modular, decoupled layers. Every capability the robot has is exposed as a **tool** — the agent discovers and uses them at runtime. You write tools in plain Python. No ROS knowledge required.
 
-| Package | Type | Description |
-|---|---|---|
-| `andr` | `ament_cmake` | Core C++ brain, BehaviorTree, action/message types, configs, launch |
-| `agent` | `ament_python` | LLM agent action server (LangGraph ReAct agent on `/agent/prompt`) |
-| `task_manager` | `ament_python` | Task bridge — receives tasks from UI, forwards to agent, relays results |
-| `skill_executor` | `ament_cmake` | C++ action server that dispatches robot skills based on YAML config |
-| `robot_skills` | `ament_python` | Mock hardware-interface action servers (speak, walk) + map management service |
-| `andr_ui` | `ament_python` | FastAPI web dashboard (event log, chat, system status panel) |
+```
+pip install andr → write a tool → python my_tool.py
+```
 
----
+## Quickstart
 
-## Prerequisites
+### Option A: pip (recommended for building tools)
 
-### System
+Requires ROS 2 Humble on the host.
+
 ```bash
-# ROS 2 Humble
+sudo apt install ros-humble-ros-base
 source /opt/ros/humble/setup.bash
-
-# BehaviorTree.CPP v3
-sudo apt install ros-humble-behaviortree-cpp-v3
-
-# yaml-cpp
-sudo apt install libyaml-cpp-dev
-
-# Nav2 (navigation stack)
-sudo apt install ros-humble-nav2-bringup ros-humble-nav2-bt-navigator \
-  ros-humble-nav2-controller ros-humble-nav2-planner ros-humble-nav2-behaviors \
-  ros-humble-nav2-waypoint-follower ros-humble-nav2-velocity-smoother \
-  ros-humble-nav2-smoother ros-humble-nav2-lifecycle-manager \
-  ros-humble-nav2-navfn-planner ros-humble-nav2-regulated-pure-pursuit-controller \
-  ros-humble-nav2-costmap-2d
+pip install andr
 ```
 
-### Python dependencies
+Scaffold a new project:
+
 ```bash
-# Agent (LangChain + Ollama)
-pip install langchain langchain-core langchain-community langchain-ollama langchain-openai \
-            langgraph pyyaml chromadb sentence-transformers
-
-# Web UI
-pip install fastapi "uvicorn[standard]" websockets
+andr init my_robot
+cd my_robot
 ```
 
-### Ollama (local LLM)
+This creates:
+
+```
+my_robot/
+  andr.config.yaml      # LLM backend, model, agent settings
+  start.py              # Launches the stack + auto-discovers your tools/inputs
+  tools/
+    example_tool.py     # Example BaseAgentTool — edit or replace
+  inputs/
+    example_input.py    # Example BaseInputSource — edit or replace
+```
+
+Edit `andr.config.yaml` to set your LLM backend, then run:
+
 ```bash
-# Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Pull a model (pick one)
-ollama pull llama3.2
-ollama pull qwen2.5
+python start.py
 ```
+
+Or launch directly:
+
+```bash
+andr start --model llama3.2
+```
+
+Open **http://localhost:8080** to chat with your agent.
+
+### Option B: Docker
+
+No ROS 2 installation required.
+
+```bash
+git clone https://github.com/jaximus808/andr.git
+cd andr
+docker compose up
+```
+
+Pull an LLM model (first time only):
+
+```bash
+docker exec -it andr-ollama ollama pull llama3.2
+```
+
+Open **http://localhost:8080**.
+
+### Option C: Build from source
+
+For contributors or full colcon workspace control. See [andr_core/README.md](andr_core/README.md).
 
 ---
 
-## Build
+## Custom Tools
 
-```bash
-cd ~/andr
+A tool is a Python class that the agent can call. It auto-registers with the running stack — no config files, no rebuilds.
 
-# Build message/action types first (other packages depend on them)
-colcon build --packages-select andr
+```python
+# tools/lights.py
+from andr import BaseAgentTool
 
-# Build everything else
-colcon build --packages-select agent task_manager skill_executor robot_skills andr_ui
+class LightsTool(BaseAgentTool):
+    TOOL_NAME = "lights"
+    TOOL_DESCRIPTION = "Control the room lights"
+    TOOL_PARAMETERS = [
+        {"name": "state", "type": "string", "required": True,
+         "description": "on or off"},
+        {"name": "brightness", "type": "int", "required": False,
+         "description": "0-100 brightness level"},
+    ]
 
-# Or build everything in one shot (colcon resolves order automatically)
-colcon build
+    def _execute(self, params, goal_handle):
+        state = params["state"]
+        brightness = params.get("brightness", 50)
+        self.get_logger().info(f"Lights {state} at {brightness}%")
+        return {"status": "done", "state": state}
 
-# Source the workspace
-source install/setup.bash
+if __name__ == "__main__":
+    import rclpy
+    rclpy.init()
+    rclpy.spin(LightsTool())
 ```
 
-> **Tip:** use `--symlink-install` during development so Python changes take effect without rebuilding:
-> ```bash
-> colcon build --symlink-install
-> ```
+```bash
+python tools/lights.py
+```
+
+The agent discovers it immediately. Ask it "turn on the lights at 80% brightness" and it just works.
+
+Drop any tool into your project's `tools/` folder and `start.py` picks it up automatically.
 
 ---
 
-## Run
+## Custom Input Sources
 
-### Full stack
-```bash
-source install/setup.bash
-ros2 launch andr andr.launch.py
+Input sources are gateways that send tasks to the agent. The agent doesn't know or care where tasks come from — it just receives prompts.
+
+```python
+# inputs/slack.py
+from andr import BaseInputSource
+from std_msgs.msg import String
+
+class SlackInput(BaseInputSource):
+    SOURCE_NAME = "slack"
+    SOURCE_DESCRIPTION = "Receives tasks from Slack messages"
+
+    def __init__(self):
+        super().__init__()
+        self.create_subscription(String, "/slack/messages", self._on_msg, 10)
+
+    def _on_msg(self, msg):
+        if not self.is_busy:
+            self.send_task(prompt=msg.data, context="slack")
+
+    def on_task_completed(self, prompt, success, summary):
+        self.get_logger().info(f"Done: {summary}")
+
+if __name__ == "__main__":
+    import rclpy
+    rclpy.init()
+    rclpy.spin(SlackInput())
 ```
 
-Then open **http://localhost:8080** in a browser for the web dashboard.
+**Lifecycle hooks:** `on_task_accepted`, `on_task_rejected`, `on_task_completed`, `on_task_feedback`
 
 ---
 
-### Launch arguments
+## CLI Reference
 
-| Argument | Default | Description |
+```bash
+andr init my_robot                        # Scaffold a new project
+andr start                                # Start the stack with defaults
+andr start --backend openai --model gpt-4o
+andr start --model llama3.2 --no-ui       # Headless
+andr task "Walk forward 2 meters"         # Send a task to the running agent
+andr status                               # Check what nodes are running
+```
+
+| Flag | Default | Description |
 |---|---|---|
-| `launch_brain` | `true` | Start the `andr_brain` C++ node |
-| `enable_wander` | `true` | Enable the BT wander loop inside the brain (set `false` to keep brain alive without autonomous wandering) |
-| `launch_agent` | `true` | Start the `agent_server` Python node |
-| `launch_task_mgr` | `true` | Start the `task_manager_server` Python node |
-| `launch_skills` | `true` | Start `skill_executor` + mock skill servers |
-| `launch_ui` | `true` | Start the web dashboard |
-| `ui_port` | `8080` | Port for the web UI |
-| `log_level` | `info` | ROS log level (`debug`/`info`/`warn`/`error`) |
-| `llm_backend` | `ollama` | `ollama` or `openai` |
-| `llm_model` | `llama3.2` | Model name (e.g. `llama3.2`, `qwen2.5`, `gpt-4o`) |
-| `llm_host` | `http://localhost:11434` | Ollama server URL |
-| `llm_temperature` | `0.2` | Sampling temperature |
-| `memory_backend` | `chroma` | RAG backend: `chroma` |
-| `memory_top_k` | `4` | Number of RAG results to inject |
-| `skills_yaml` | *(installed share)* | Path to `skills.yaml` |
-| `max_iterations` | `20` | Agent loop iteration cap |
-
----
-
-### Common launch variants
-
-```bash
-# Default (Ollama + llama3.2)
-ros2 launch andr andr.launch.py
-
-# Disable autonomous wander (brain stays up for /incoming_task)
-ros2 launch andr andr.launch.py enable_wander:=false
-
-# Use a different model
-ros2 launch andr andr.launch.py llm_model:=qwen2.5
-
-# OpenAI backend (requires OPENAI_API_KEY env var)
-ros2 launch andr andr.launch.py llm_backend:=openai llm_model:=gpt-4o
-
-# UI only (no brain, agent, or skills — for UI development)
-ros2 launch andr andr.launch.py launch_brain:=false launch_agent:=false launch_skills:=false launch_task_mgr:=false
-
-# Agent + task_manager + UI only (no brain or skills)
-ros2 launch andr andr.launch.py launch_brain:=false launch_skills:=false
-
-# Custom UI port
-ros2 launch andr andr.launch.py ui_port:=9000
-
-# Verbose logging
-ros2 launch andr andr.launch.py log_level:=debug
-```
-
----
-
-## Simulation
-
-### Launch the simulation
-
-```bash
-source install/setup.bash
-
-# Default — mapping mode (SLAM builds a new map)
-ros2 launch andr_sim robot.launch.py
-
-# Localization mode — load a previously saved map
-ros2 launch andr_sim robot.launch.py localization:=true map_file:=$HOME/andr_maps/my_map
-```
-
-### Simulation launch arguments
-
-| Argument | Default | Description |
-|---|---|---|
-| `use_sim_time` | `true` | Use Gazebo simulation clock |
-| `world` | `test_world.world` | Path to Gazebo world file |
-| `localization` | `false` | Run SLAM Toolbox in localization mode instead of mapping |
-| `map_file` | *(empty)* | Path to serialized map for localization (without file extension) |
-
----
-
-## Map Management
-
-The `map_server` node starts automatically with the simulation and provides services for saving and retrieving SLAM maps. Saved maps are stored in `~/andr_maps/` by default.
-
-### Services
-
-| Service | Type | Description |
-|---|---|---|
-| `/map_manager/save_map` | `andr/srv/SaveMap` | Save the current occupancy grid + SLAM pose graph to disk |
-| `/map_manager/get_maps` | `andr/srv/GetMaps` | List all saved map names |
-
-### Save a map
-
-```bash
-ros2 service call /map_manager/save_map andr/srv/SaveMap "{map_name: 'my_map'}"
-```
-
-This saves to `~/andr_maps/`:
-- `my_map.pgm` + `my_map.yaml` — standard occupancy grid (viewable in any image viewer)
-- `my_map.posegraph` + `my_map.data` — SLAM Toolbox pose graph (needed for localization)
-
-If the name already exists, the files are overwritten.
-
-### List saved maps
-
-```bash
-ros2 service call /map_manager/get_maps andr/srv/GetMaps
-```
-
-### Localize on a saved map
-
-Once you have a saved map, launch the simulation in localization mode:
-
-```bash
-ros2 launch andr_sim robot.launch.py localization:=true map_file:=$HOME/andr_maps/my_map
-```
-
-This launches `localization_slam_toolbox_node` instead of the mapping node, loading the serialized pose graph so the robot localizes against the existing map.
-
----
-
-## Run nodes individually
-
-```bash
-source install/setup.bash
-
-# Agent server (LangChain agent on /agent/prompt)
-ros2 run agent agent_server
-
-# Task manager (bridges UI -> agent on /task_manager/execute)
-ros2 run task_manager task_manager_server
-
-# Skill executor (C++ router on /skill_executor)
-ros2 run skill_executor skill_executor_node
-
-# Mock skill servers
-ros2 run robot_skills speak_server
-ros2 run robot_skills walk_server
-
-# Map management service
-ros2 run robot_skills map_server
-
-# Web UI server
-ros2 run andr_ui ui_server
-# or with a custom port:
-ANDR_UI_PORT=9000 ros2 run andr_ui ui_server
-```
+| `--backend` | `ollama` | `ollama` or `openai` |
+| `--model` | `llama3.2` | Model name |
+| `--host` | `http://localhost:11434` | Ollama server URL |
+| `--temperature` | `0.2` | Sampling temperature |
+| `--max-iterations` | `20` | Agent ReAct loop cap |
+| `--tools` | | Comma-separated tools to launch (e.g., `speak,walk`) |
+| `--no-ui` | | Disable the web dashboard |
+| `--ui-port` | `8080` | Web UI port |
 
 ---
 
 ## Architecture
 
 ```
-Browser (http://localhost:8080)
-  |  WebSocket
-  v
-andr_ui (FastAPI + ROS bridge)
-  |  /task_manager/execute (TaskGoal action)
-  v
-task_manager_server
-  |  /agent/prompt (Agent action)
-  v
-agent_server (LangGraph ReAct agent)
-  |  Tools call SkillExecutor
-  v
-skill_executor (C++ router)
-  |  /skills/speak, /skills/walk (ExecuteSkill action)
-  v
-robot_skills (individual action servers)
+Input Sources (Web UI, vision bridge, your custom inputs)
+        │
+        ▼
+  task_manager          ← single entry point for all tasks
+        │
+        ▼
+  agent_server          ← LLM ReAct loop (plan → act → observe)
+        │
+        ▼
+  tool_manager          ← discovers and dispatches tool calls
+        │
+        ▼
+  Tool servers          ← built-in + your custom tools
 ```
+
+**Principles:**
+
+- **Agent is tool-agnostic** — discovers capabilities at runtime, never hard-codes them
+- **Everything is a tool** — any capability is a registered action server
+- **Input sources are bridges** — they send tasks through task_manager, never talk to the agent directly
+- **task_manager is the single entry point** — all tasks flow through it, regardless of origin
 
 ---
 
-## Action servers
+## Docker Configuration
 
-| Server | Type | Description |
+| Variable | Default | Description |
 |---|---|---|
-| `/task_manager/execute` | `andr/action/TaskGoal` | UI sends tasks here; relayed to agent |
-| `/agent/prompt` | `andr/action/Agent` | LangChain agent runs autonomously |
-| `/skill_executor` | `andr/action/ExecuteSkill` | Routes skills to hardware servers |
-| `/skills/speak` | `andr/action/ExecuteSkill` | TTS mock server |
-| `/skills/walk` | `andr/action/ExecuteSkill` | Walking mock server |
-| `/wander` | `andr/action/Wander` | Wander behavior |
+| `ANDR_LLM_BACKEND` | `ollama` | `ollama` or `openai` |
+| `ANDR_LLM_MODEL` | `llama3.2` | Model name |
+| `ANDR_LLM_TEMPERATURE` | `0.2` | Sampling temperature |
+| `ANDR_UI_PORT` | `8080` | Web UI port |
+| `ANDR_TOOLS` | | Comma-separated tools to launch |
+| `OPENAI_API_KEY` | | Required for `openai` backend |
 
-## Services
-
-| Service | Type | Description |
-|---|---|---|
-| `/map_manager/save_map` | `andr/srv/SaveMap` | Save current SLAM map to disk |
-| `/map_manager/get_maps` | `andr/srv/GetMaps` | List all saved maps |
-
-## Key topics
-
-| Topic | Type | Direction | Description |
-|---|---|---|---|
-| `/ui/prompt` | `andr/msg/Prompt` | UI -> ROS | Prompt published for logging |
-| `/robot/speech` | `andr/msg/RobotSpeech` | ROS -> UI | Robot speech in chat panel |
-| `/agent/feedback` | `std_msgs/String` (JSON) | ROS -> UI | Agent loop state updates |
-| `/robot/status` | `std_msgs/String` | ROS -> UI | Arbitrary status strings |
+GPU support (for Ollama): uncomment the `deploy` section in `docker-compose.yml`.
 
 ---
 
-## Send a task from the CLI (without the UI)
+## Project Structure
 
-```bash
-# Via task_manager
-ros2 action send_goal --feedback /task_manager/execute andr/action/TaskGoal \
-  "{prompt: 'Go to the kitchen and look for a cup', context: ''}"
-
-# Directly to the agent
-ros2 action send_goal --feedback /agent/prompt andr/action/Agent \
-  "{prompt: 'Navigate to the living room', context: ''}"
+```
+andr/
+  pip/andr/               # pip package source (pip install andr)
+  andr_msgs/              # ROS 2 message/service/action definitions
+  andr_core/
+    agent/                # LLM agent (ReAct loop, memory, prompts)
+    task_manager/         # Routes tasks → agent
+    tool_manager/         # C++ skill registry + dispatcher
+    andr_tools/           # Base classes: BaseAgentTool, BaseInputSource
+    andr_brain/           # C++ BehaviorTree brain
+    andr_launch/          # Launch files + stack.yaml config
+  andr_nav/               # Navigation tools (walk, spin, navigate, map)
+  andr_skills/            # Non-nav tools (speak, gesture, vision)
+  andr_ui/                # Web UI (FastAPI + WebSocket)
+  andr_sim/               # Gazebo simulation (URDF, worlds, Nav2)
 ```
 
 ---
 
-## Manually publish to UI topics (for testing)
+## License
 
-```bash
-# Simulate robot speaking
-ros2 topic pub --once /robot/speech andr/msg/RobotSpeech \
-  "{text: 'I have arrived at the kitchen', emotion: 'happy'}"
-
-# Simulate a status update
-ros2 topic pub --once /robot/status std_msgs/msg/String \
-  "{data: 'Battery at 80%'}"
-```
-
----
-
-## Rebuild after changes
-
-```bash
-cd ~/andr
-
-# Message/action type changes (always rebuild andr first, then dependents)
-colcon build --packages-select andr
-colcon build --packages-select agent task_manager skill_executor robot_skills andr_ui
-source install/setup.bash
-
-# Python-only changes (with --symlink-install this is instant)
-colcon build --packages-select agent task_manager andr_ui
-source install/setup.bash
-
-# C++ changes
-colcon build --packages-select andr skill_executor
-source install/setup.bash
-```
-
- ros2 launch andr andr.launch.py enable_wander:=false
- ros2 launch andr andr.launch.py enable_wander:=falseros2 launch andr_sim robot.launch.py
-
-## Running 
-In three terminals
-Start them in that order — sim first (so nav2/SLAM are up), then tools (so they register with tool_manager), then core (so the agent finds all the tools).
-```
-  
-  # Terminal 1 — Sim (Gazebo + Nav2 + SLAM)
-
-
-  ros2 launch andr_sim robot.launch.py
-  # Terminal 2 — Tools (tool_manager + all skill servers)
-
-
-  ros2 launch andr_launch tools.launch.py
-  # Terminal 3 — Core (brain, agent, task_manager, prompt_manager, UI)
-
-
-  ros2 launch andr_launch andr.launch.py
-  
+Apache 2.0 — see [LICENSE](LICENSE) for details.

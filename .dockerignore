@@ -1,0 +1,12 @@
+build/
+install/
+log/
+.git/
+.github/
+__pycache__/
+*.pyc
+.vscode/
+.claude/
+random/
+*.egg-info/
+pip/

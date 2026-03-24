@@ -1,0 +1,48 @@
+# docker compose up              — Start ANDR + Ollama
+# docker compose up andr         — Start ANDR only (bring your own LLM)
+# docker compose up ollama       — Start Ollama only
+#
+# Environment variables (set in .env or export):
+#   ANDR_LLM_MODEL=llama3.2
+#   OPENAI_API_KEY=sk-...        (if using openai backend)
+
+services:
+  # ---------- Ollama (local LLM server) ----------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: andr-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment for GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ---------- ANDR Agent Stack ----------
+  andr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: andr-agent
+    depends_on:
+      - ollama
+    ports:
+      - "${ANDR_UI_PORT:-8080}:8080"
+    environment:
+      - ANDR_LLM_BACKEND=${ANDR_LLM_BACKEND:-ollama}
+      - ANDR_LLM_MODEL=${ANDR_LLM_MODEL:-llama3.2}
+      - ANDR_LLM_HOST=http://ollama:11434
+      - ANDR_LLM_TEMPERATURE=${ANDR_LLM_TEMPERATURE:-0.2}
+      - ANDR_UI_PORT=8080
+      - ANDR_TOOLS=${ANDR_TOOLS:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    command: ["full"]
+
+volumes:
+  ollama_data:

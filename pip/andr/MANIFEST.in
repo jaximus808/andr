@@ -1,0 +1,2 @@
+recursive-include andr/_libs *.so
+recursive-include andr/_msgs_bind *.so *.py *.c
