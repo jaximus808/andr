@@ -25,6 +25,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/GetSystemPrompt.srv"
     "srv/SetSystemPrompt.srv"
     "srv/GetPromptHistory.srv"
+    "srv/MemoryAdd.srv"
+    "srv/MemoryQuery.srv"
     "action/Wander.action"
     "action/Agent.action"
     "action/ExecuteSkill.action"

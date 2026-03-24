@@ -40,6 +40,15 @@ core:
   prompt_manager:
     enabled: true
 
+  memory:
+    enabled: true
+    package: agent
+    executable: memory_chroma_node
+    params: {}
+      # persist_path: /tmp/andr_memory
+      # collection_name: andr
+      # embedding_model: all-MiniLM-L6-v2
+
   tool_manager:
     enabled: true
 

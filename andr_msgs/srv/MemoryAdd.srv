@@ -1,0 +1,6 @@
+# Add a document to the robot's memory store.
+string text
+string metadata_json
+---
+bool success
+string message

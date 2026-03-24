@@ -1,0 +1,7 @@
+# Query the robot's memory store for relevant documents.
+string query
+int32 top_k
+---
+string[] contents
+float64[] scores
+string[] metadata_json
