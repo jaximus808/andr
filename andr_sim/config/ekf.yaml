@@ -1,0 +1,110 @@
+# =============================================================================
+# robot_localization EKF — Sensor Fusion for ANDR
+# =============================================================================
+# Fuses wheel odometry + IMU into a single filtered odometry estimate.
+# Output: /odometry/filtered topic + odom → base_link TF
+#
+# Sensor inputs:
+#   odom0  — wheel encoder odometry (from diff_drive node or micro-ROS)
+#   imu0   — IMU (from ESP32 via micro-ROS)
+#
+# Each sensor's _config is a 15-element boolean array mapping to:
+#   [x, y, z,  roll, pitch, yaw,  vx, vy, vz,  vroll, vpitch, vyaw,  ax, ay, az]
+#
+# Rule of thumb: only fuse what the sensor actually measures well.
+#   - Wheel odom: good at x, y position and vx velocity (2D ground plane)
+#   - IMU: good at orientation (roll, pitch, yaw) and angular velocities
+#
+# Integration with Nav2:
+#   When using this EKF, Nav2's odom_topic should point to /odometry/filtered
+#   instead of /odom. The EKF publishes the odom→base_link TF, so your
+#   wheel_odometry node must NOT publish that TF (only the topic).
+#
+#   In nav2_params.yaml, change:
+#     bt_navigator.odom_topic: /odometry/filtered
+#     velocity_smoother.odom_topic: /odometry/filtered
+#
+# Launch:
+#   ros2 launch robot_localization ekf.launch.py
+#     ekf_config:=<path_to>/ekf.yaml
+#
+# =============================================================================
+
+ekf_filter_node:
+  ros__parameters:
+    use_sim_time: false       # set true for Gazebo, false for real robot
+
+    # Frame configuration
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom         # use 'odom' — SLAM handles map→odom
+    map_frame: map
+
+    # Publish the odom → base_link transform
+    publish_tf: true
+
+    # EKF update rate (Hz) — match or exceed your fastest sensor
+    frequency: 50.0
+
+    # How long to wait for a transform before giving up
+    transform_timeout: 0.1
+
+    # ── Wheel Odometry ────────────────────────────────────────────────────────
+    # Topic: nav_msgs/Odometry from your wheel encoder node
+    # We trust: x, y position and forward velocity (vx)
+    # We ignore: z (ground robot), orientation (IMU is better for this)
+    odom0: /wheel/odom
+    odom0_config: [true,  true,  false,   # x, y, z
+                   false, false, false,   # roll, pitch, yaw
+                   true,  false, false,   # vx, vy, vz
+                   false, false, false,   # vroll, vpitch, vyaw
+                   false, false, false]   # ax, ay, az
+
+    # Set true if odom0 is published in a body frame (base_link) vs world frame (odom)
+    # Most diff_drive nodes publish in world frame → false
+    odom0_relative: false
+
+    # ── IMU ───────────────────────────────────────────────────────────────────
+    # Topic: sensor_msgs/Imu from your IMU (ESP32 via micro-ROS)
+    # We trust: orientation (yaw especially), angular velocities, linear accel
+    # We ignore: roll/pitch orientation for a ground robot (optional — enable
+    #   if your robot drives on uneven terrain)
+    imu0: /imu/data
+    imu0_config: [false, false, false,   # x, y, z (IMU can't measure position)
+                  true,  true,  true,    # roll, pitch, yaw
+                  false, false, false,   # vx, vy, vz (IMU can't measure velocity)
+                  true,  true,  true,    # vroll, vpitch, vyaw
+                  true,  true,  true]    # ax, ay, az
+
+    # Remove gravitational acceleration from IMU data
+    imu0_remove_gravitational_acceleration: true
+
+    # Set true if IMU orientation is relative (not absolute/world-referenced)
+    # Most IMUs with a magnetometer give absolute yaw → false
+    # If no magnetometer (just gyro integration) → true
+    imu0_relative: false
+
+    # ── Process Noise Covariance ──────────────────────────────────────────────
+    # How much the EKF trusts its own prediction vs sensor readings.
+    # Smaller values = trust prediction more, slower to respond to sensors.
+    # Larger values = trust sensors more, noisier output.
+    # These defaults work well for most indoor diff-drive robots.
+    # Diagonal of the 15×15 process noise covariance matrix:
+    #   [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
+    process_noise_covariance: [
+      0.05,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.05,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.06,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.03,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.03,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.06,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.025, 0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.025, 0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.04,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,   0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,   0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.02,  0.0,   0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,   0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,
+      0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.015
+    ]
