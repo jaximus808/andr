@@ -18,10 +18,14 @@ llm:
 
 # ─── Core infrastructure ─────────────────────────────────────────────────────
 core:
-  brain:
+  task_brain:
     enabled: true
     params:
-      enable_wander: false         # BT wander loop — not ready yet
+      enable_wander: false         # Send idle prompts when no tasks pending
+      wander_interval_sec: 60.0    # Seconds between wander prompts
+      wander_prompt: ""            # Custom wander prompt (empty = rotate defaults)
+      enable_scheduler: true       # Enable scheduled/cron tasks
+      resume_preempted: true       # Resume interrupted tasks after preemption
 
   task_manager:
     enabled: true

@@ -35,5 +35,8 @@ pip/andr/build/
 pip/andr/dist/
 pip/andr/*.egg-info/
 
+# MkDocs build output
+site/
+
 # OS
 .DS_Store

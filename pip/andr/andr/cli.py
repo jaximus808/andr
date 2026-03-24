@@ -130,6 +130,36 @@ def _run_agent(backend, model, host, temperature, max_iterations):
         rclpy.shutdown()
 
 
+def _run_task_brain(enable_wander, wander_interval, resume_preempted):
+    """Run task_brain node in-process."""
+    import rclpy
+    from rclpy.executors import MultiThreadedExecutor
+
+    logging.basicConfig(level=logging.INFO)
+
+    ros_args = [
+        "--ros-args",
+        "-p", f"enable_wander:={'true' if enable_wander else 'false'}",
+        "-p", f"wander_interval_sec:={wander_interval}",
+        "-p", f"enable_scheduler:=true",
+        "-p", f"resume_preempted:={'true' if resume_preempted else 'false'}",
+    ]
+    rclpy.init(args=ros_args)
+
+    from andr.runtime.task_manager.task_brain import TaskBrain
+
+    brain = TaskBrain()
+    executor = MultiThreadedExecutor()
+    executor.add_node(brain)
+    try:
+        executor.spin()
+    except (KeyboardInterrupt, Exception):
+        pass
+    finally:
+        brain.destroy()
+        rclpy.shutdown()
+
+
 def _find_tool_manager():
     """Find tool_manager_node binary.
 
@@ -259,8 +289,22 @@ def cmd_start(args):
     p = multiprocessing.Process(target=_run_task_manager, daemon=True)
     p.start()
     mp_procs.append(p)
+    time.sleep(1)
 
-    # 4. Agent (Python — runs from bundled code)
+    # 4. Task brain (Python — priority scheduler, preemption, wander)
+    if not args.no_brain:
+        wander = args.enable_wander
+        wander_label = f" wander={'on' if wander else 'off'}"
+        print(f"  [ok]   Starting task_brain...{wander_label}")
+        p = multiprocessing.Process(
+            target=_run_task_brain,
+            args=(wander, args.wander_interval, not args.no_resume),
+            daemon=True,
+        )
+        p.start()
+        mp_procs.append(p)
+
+    # 5. Agent (Python — runs from bundled code)
     print("  [ok]   Starting agent...")
     p = multiprocessing.Process(
         target=_run_agent,
@@ -270,7 +314,7 @@ def cmd_start(args):
     p.start()
     mp_procs.append(p)
 
-    # 5. Tools (need andr-robo or colcon workspace)
+    # 6. Tools (need andr-robo or colcon workspace)
     if args.tools:
         tool_names = [t.strip() for t in args.tools.split(",")]
         for name in tool_names:
@@ -284,7 +328,7 @@ def cmd_start(args):
             processes.append(_launch_tool_via_ros2(pkg, exe))
             print(f"  [ok]   Starting tool: {name}")
 
-    # 6. UI (bundled — runs from pip package)
+    # 7. UI (bundled — runs from pip package)
     if not args.no_ui:
         print(f"  [ok]   Starting UI on port {args.ui_port}")
         p = multiprocessing.Process(target=_run_ui, args=(args.ui_port,), daemon=True)
@@ -390,10 +434,10 @@ def cmd_status(args):
 
     andr_nodes = {
         "agent_server": "Agent (LLM ReAct loop)",
+        "task_brain": "Task Brain (scheduler/preemption)",
         "task_manager": "Task Manager",
         "tool_manager": "Tool Manager",
         "prompt_manager": "Prompt Manager",
-        "andr_brain": "Brain (BehaviorTree)",
         "ui_server": "Web UI",
     }
 
@@ -444,6 +488,23 @@ llm:
 # Agent settings
 agent:
   max_iterations: 20
+
+# Task brain (scheduler, preemption, wander)
+brain:
+  enabled: true
+  enable_wander: false           # Send idle prompts when no tasks pending
+  wander_interval_sec: 60.0     # Seconds between wander prompts
+  resume_preempted: true         # Resume interrupted tasks after higher-priority ones finish
+  # wander_prompt: "Look around and describe what you see."  # Custom wander prompt
+
+# Scheduled tasks (run automatically on a timer)
+# scheduled_tasks:
+#   check_battery:
+#     prompt: "Check your battery level and report it."
+#     interval_sec: 300          # Every 5 minutes
+#   patrol:
+#     prompt: "Do a patrol of the area and report anything unusual."
+#     interval_sec: 600          # Every 10 minutes
 
 # Web UI
 ui:
@@ -518,6 +579,7 @@ def main():
     llm = config.get("llm", {{}})
     agent = config.get("agent", {{}})
     ui = config.get("ui", {{}})
+    brain = config.get("brain", {{}})
 
     # Build andr start args
     start_args = [
@@ -528,10 +590,20 @@ def main():
         "--temperature", str(llm.get("temperature", 0.2)),
         "--max-iterations", str(agent.get("max_iterations", 20)),
         "--ui-port", str(ui.get("port", 8080)),
+        "--wander-interval", str(brain.get("wander_interval_sec", 60.0)),
     ]
 
     if not ui.get("enabled", True):
         start_args.append("--no-ui")
+
+    if not brain.get("enabled", True):
+        start_args.append("--no-brain")
+
+    if brain.get("enable_wander", False):
+        start_args.append("--enable-wander")
+
+    if not brain.get("resume_preempted", True):
+        start_args.append("--no-resume")
 
     # Auto-launch tools from andr-robo
     tools_list = config.get("tools", [])
@@ -722,6 +794,10 @@ def main():
     p_start.add_argument("--tools", default="", help="Comma-separated tools to launch (e.g., speak,walk,spin)")
     p_start.add_argument("--no-ui", action="store_true", help="Don't start the web UI")
     p_start.add_argument("--ui-port", type=int, default=8080, help="Web UI port (default: 8080)")
+    p_start.add_argument("--no-brain", action="store_true", help="Don't start the task brain (scheduler/preemption)")
+    p_start.add_argument("--enable-wander", action="store_true", help="Enable wander mode (idle prompts when no tasks)")
+    p_start.add_argument("--wander-interval", type=float, default=60.0, help="Seconds between wander prompts (default: 60)")
+    p_start.add_argument("--no-resume", action="store_true", help="Don't resume preempted tasks")
 
     # --- andr task ---
     p_task = sub.add_parser("task", help="Send a task to the running agent")

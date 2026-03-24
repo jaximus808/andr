@@ -74,21 +74,21 @@ def _build_nodes(context, *args, **kwargs) -> list:
         "------------------------------------------------------\n",
     ]
 
-    # ── Core: brain ──────────────────────────────────────────────────────
-    brain = core.get("brain", {})
+    # ── Core: task_brain ───────────────────────────────────────────────────
+    brain = core.get("task_brain", {})
     if brain.get("enabled", False):
         brain_params = brain.get("params", {})
         nodes.append(Node(
-            package="andr_brain",
-            executable="andr_brain_node",
-            name="andr_brain",
+            package="task_manager",
+            executable="task_brain",
+            name="task_brain",
             output="screen",
             emulate_tty=True,
             arguments=ros_args,
             parameters=[brain_params] if brain_params else [],
         ))
-        wander = brain_params.get("enable_wander", True)
-        summary_lines.append(f"  [core] brain          (wander={'on' if wander else 'off'})\n")
+        wander = brain_params.get("enable_wander", False)
+        summary_lines.append(f"  [core] task_brain     (wander={'on' if wander else 'off'})\n")
 
     # ── Core: task_manager ───────────────────────────────────────────────
     if core.get("task_manager", {}).get("enabled", False):

@@ -34,6 +34,8 @@ class TaskManagerServer(Node):
         super().__init__("task_manager")
 
         self._cb_group = ReentrantCallbackGroup()
+        self._current_agent_goal_handle = None
+        self._cancel_requested = threading.Event()
 
         # Action client to talk to the agent
         self._agent_client = ActionClient(
@@ -70,7 +72,11 @@ class TaskManagerServer(Node):
         return GoalResponse.ACCEPT
 
     def _cancel_cb(self, goal_handle) -> CancelResponse:
-        self.get_logger().info("Cancel requested for task.")
+        self.get_logger().info("Cancel requested for task — forwarding to agent.")
+        self._cancel_requested.set()
+        # Forward cancellation to the agent
+        if self._current_agent_goal_handle is not None:
+            self._current_agent_goal_handle.cancel_goal_async()
         return CancelResponse.ACCEPT
 
     # ------------------------------------------------------------------
@@ -80,6 +86,7 @@ class TaskManagerServer(Node):
     def _execute_cb(self, goal_handle) -> TaskGoal.Result:
         goal = goal_handle.request
         result = TaskGoal.Result()
+        self._cancel_requested.clear()
 
         self.get_logger().info(f"Task received: '{goal.prompt[:80]}'")
 
@@ -122,14 +129,36 @@ class TaskManagerServer(Node):
             result.summary = msg
             return result
 
+        # Track the running agent goal so cancel can forward to it
+        self._current_agent_goal_handle = agent_goal_handle
+
         self.get_logger().info("Agent accepted goal — waiting for result…")
         self._send_task_feedback(goal_handle, "executing", "Agent is working…", 0.1)
 
-        # Wait for agent to finish — no timeout, skills can run for a long time
+        # Wait for agent to finish or cancellation
         result_future = agent_goal_handle.get_result_async()
         result_event = threading.Event()
         result_future.add_done_callback(lambda _: result_event.set())
-        result_event.wait()
+
+        # Poll so we can detect cancellation
+        while not result_event.wait(timeout=0.5):
+            if self._cancel_requested.is_set():
+                self.get_logger().info("Task cancelled — aborting agent goal.")
+                agent_goal_handle.cancel_goal_async()
+                # Give agent a moment to wrap up
+                result_event.wait(timeout=5.0)
+                break
+
+        self._current_agent_goal_handle = None
+
+        # Check if this was a cancellation
+        if self._cancel_requested.is_set():
+            self._cancel_requested.clear()
+            self._send_task_feedback(goal_handle, "cancelled", "Task was cancelled", 1.0)
+            goal_handle.canceled()
+            result.success = False
+            result.summary = "Task cancelled"
+            return result
 
         wrapped = result_future.result()
         if wrapped is None:

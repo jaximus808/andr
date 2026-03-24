@@ -162,6 +162,38 @@ if __name__ == "__main__":
 
 ---
 
+## Task Brain
+
+The task brain is a priority-based scheduler that sits above the agent. It handles task queuing, preemption, scheduled tasks, and optional idle behavior.
+
+**Priority levels** (highest first): `URGENT` > `USER` > `SCHEDULED` > `IDLE`
+
+When a higher-priority task arrives, the brain interrupts the current task, saves its state, runs the new one, then resumes the old one.
+
+Configure in `andr.config.yaml`:
+
+```yaml
+brain:
+  enabled: true
+  enable_wander: false           # idle prompts when nothing to do
+  wander_interval_sec: 60.0
+  resume_preempted: true         # resume interrupted tasks
+
+# Recurring tasks on a timer
+scheduled_tasks:
+  check_battery:
+    prompt: "Check your battery level and report it."
+    interval_sec: 300
+```
+
+```bash
+andr start --enable-wander                  # turn on idle behavior
+andr start --no-brain                       # disable brain entirely
+andr start --no-resume                      # don't resume interrupted tasks
+```
+
+---
+
 ## CLI Reference
 
 ```bash
@@ -169,6 +201,7 @@ andr init my_robot                        # Scaffold a new project
 andr start                                # Start the stack with defaults
 andr start --backend openai --model gpt-4o
 andr start --model llama3.2 --no-ui       # Headless
+andr start --enable-wander                # Idle behavior when no tasks
 andr task "Walk forward 2 meters"         # Send a task to the running agent
 andr status                               # Check what nodes are running
 ```
@@ -183,6 +216,10 @@ andr status                               # Check what nodes are running
 | `--tools` | | Comma-separated tools to launch (e.g., `speak,walk`) |
 | `--no-ui` | | Disable the web dashboard |
 | `--ui-port` | `8080` | Web UI port |
+| `--no-brain` | | Disable task brain (scheduler/preemption) |
+| `--enable-wander` | | Enable idle behavior |
+| `--wander-interval` | `60` | Seconds between idle prompts |
+| `--no-resume` | | Don't resume interrupted tasks |
 
 ---
 
@@ -190,6 +227,9 @@ andr status                               # Check what nodes are running
 
 ```
 Input Sources (Web UI, vision bridge, your custom inputs)
+        │
+        ▼
+  task_brain            ← priority queue, preemption, scheduling, wander
         │
         ▼
   task_manager          ← single entry point for all tasks

@@ -23,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'task_manager_server = task_manager.task_manager_server:main',
+            'task_brain = task_manager.task_brain:main',
         ],
     },
 )
