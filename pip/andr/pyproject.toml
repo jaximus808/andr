@@ -54,10 +54,14 @@ packages = ["andr", "andr.tools", "andr._libs", "andr._msgs_bind",
             "andr._msgs_bind.andr_msgs", "andr._msgs_bind.andr_msgs.action",
             "andr._msgs_bind.andr_msgs.msg", "andr._msgs_bind.andr_msgs.srv",
             "andr.runtime", "andr.runtime.agent", "andr.runtime.agent.prompts",
-            "andr.runtime.task_manager", "andr.runtime.andr_ui"]
+            "andr.runtime.task_manager", "andr.runtime.andr_ui",
+            "andr.templates", "andr.templates.managers",
+            "andr.templates.tools", "andr.templates.inputs",
+            "andr.templates.runnables"]
 
 [tool.setuptools.package-data]
 "andr._libs" = ["*.so"]
 "andr._msgs_bind.andr_msgs" = ["*.so", "*.c"]
 "andr" = ["bin/tool_manager_node"]
 "andr.runtime.andr_ui" = ["static/*"]
+"andr.templates.managers" = ["migrations/*.sql"]

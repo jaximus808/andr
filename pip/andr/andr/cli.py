@@ -467,11 +467,66 @@ def cmd_init(args):
 
     print(f"Creating ANDR project: {name}/")
 
-    # Create directory structure
+    # ── Locate bundled template and static directories ────────────────
+    pkg_dir = os.path.dirname(os.path.abspath(__file__))
+    templates_dir = os.path.join(pkg_dir, "templates")
+    static_src = os.path.join(pkg_dir, "runtime", "andr_ui", "static")
+
+    # ── Create directory structure ────────────────────────────────────
+    os.makedirs(os.path.join(project_dir, "managers", "migrations"))
     os.makedirs(os.path.join(project_dir, "tools"))
     os.makedirs(os.path.join(project_dir, "inputs"))
+    os.makedirs(os.path.join(project_dir, "runnables"))
+    os.makedirs(os.path.join(project_dir, "ui", "static"))
 
-    # --- andr.config.yaml ---
+    # ── Copy template files (managers, tools, inputs) ─────────────────
+    import shutil
+
+    # Managers
+    for src_name in ("__init__.py", "map_server.py"):
+        src = os.path.join(templates_dir, "managers", src_name)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(project_dir, "managers", src_name))
+
+    # Manager migrations (SQL files)
+    migrations_src = os.path.join(templates_dir, "managers", "migrations")
+    if os.path.isdir(migrations_src):
+        for sql_file in sorted(os.listdir(migrations_src)):
+            if sql_file.endswith(".sql"):
+                shutil.copy2(
+                    os.path.join(migrations_src, sql_file),
+                    os.path.join(project_dir, "managers", "migrations", sql_file),
+                )
+
+    # Tools
+    for src_name in ("__init__.py", "walk.py", "spin.py", "navigate_to_point.py"):
+        src = os.path.join(templates_dir, "tools", src_name)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(project_dir, "tools", src_name))
+
+    # Inputs
+    for src_name in ("__init__.py", "web_ui.py"):
+        src = os.path.join(templates_dir, "inputs", src_name)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(project_dir, "inputs", src_name))
+
+    # Runnables
+    for src_name in ("__init__.py",):
+        src = os.path.join(templates_dir, "runnables", src_name)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(project_dir, "runnables", src_name))
+
+    # UI static files (HTML, CSS, JS)
+    if os.path.isdir(static_src):
+        for item in os.listdir(static_src):
+            s = os.path.join(static_src, item)
+            d = os.path.join(project_dir, "ui", "static", item)
+            if os.path.isfile(s):
+                shutil.copy2(s, d)
+            elif os.path.isdir(s):
+                shutil.copytree(s, d)
+
+    # ── andr.config.yaml ──────────────────────────────────────────────
     _write(project_dir, "andr.config.yaml", f"""\
 # {name} — ANDR project configuration
 #
@@ -495,16 +550,15 @@ brain:
   enable_wander: false           # Send idle prompts when no tasks pending
   wander_interval_sec: 60.0     # Seconds between wander prompts
   resume_preempted: true         # Resume interrupted tasks after higher-priority ones finish
-  # wander_prompt: "Look around and describe what you see."  # Custom wander prompt
 
 # Scheduled tasks (run automatically on a timer)
 # scheduled_tasks:
 #   check_battery:
 #     prompt: "Check your battery level and report it."
-#     interval_sec: 300          # Every 5 minutes
+#     interval_sec: 300
 #   patrol:
 #     prompt: "Do a patrol of the area and report anything unusual."
-#     interval_sec: 600          # Every 10 minutes
+#     interval_sec: 600
 
 # Web UI
 ui:
@@ -514,24 +568,19 @@ ui:
 # System prompt (optional — override the default)
 # system_prompt: |
 #   You are a helpful robot assistant...
-
-# Tools to auto-launch from andr-robo (requires colcon workspace)
-# Uncomment the tools you have installed:
-# tools:
-#   - speak
-#   - walk
-#   - spin
-#   - navigate_to_point
-#   - map
 """)
 
-    # --- start.py ---
+    # ── start.py ──────────────────────────────────────────────────────
     _write(project_dir, "start.py", f"""\
 #!/usr/bin/env python3
 \"\"\"Start the {name} ANDR project.
 
-Reads configuration from andr.config.yaml and launches the full stack.
-Also auto-discovers and launches any tools in tools/ and inputs in inputs/.
+Reads configuration from andr.config.yaml and launches the full stack:
+  - Core (hidden): tool_manager, prompt_manager, task_manager, agent, brain
+  - Managers: map_server, etc. (auto-discovered from managers/)
+  - Tools: walk, spin, navigate_to_point, etc. (auto-discovered from tools/)
+  - Inputs: web_ui, etc. (auto-discovered from inputs/)
+  - Runnables: standalone processes (auto-discovered from runnables/)
 
 Usage:
     python start.py
@@ -542,6 +591,7 @@ import importlib.util
 import multiprocessing
 import os
 import sys
+import time
 
 import yaml
 
@@ -581,7 +631,7 @@ def main():
     ui = config.get("ui", {{}})
     brain = config.get("brain", {{}})
 
-    # Build andr start args
+    # Build andr start args (core stack only — no UI, tools come from local dirs)
     start_args = [
         "andr", "start",
         "--backend", llm.get("backend", "ollama"),
@@ -591,10 +641,8 @@ def main():
         "--max-iterations", str(agent.get("max_iterations", 20)),
         "--ui-port", str(ui.get("port", 8080)),
         "--wander-interval", str(brain.get("wander_interval_sec", 60.0)),
+        "--no-ui",   # UI is handled by inputs/web_ui.py
     ]
-
-    if not ui.get("enabled", True):
-        start_args.append("--no-ui")
 
     if not brain.get("enabled", True):
         start_args.append("--no-brain")
@@ -605,25 +653,52 @@ def main():
     if not brain.get("resume_preempted", True):
         start_args.append("--no-resume")
 
-    # Auto-launch tools from andr-robo
-    tools_list = config.get("tools", [])
-    if tools_list:
-        start_args.extend(["--tools", ",".join(tools_list)])
+    # Set UI port as env var for inputs/web_ui.py
+    os.environ["ANDR_UI_PORT"] = str(ui.get("port", 8080))
 
-    # Discover custom tools and inputs
+    # Discover managers, tools, inputs, and runnables
+    manager_files = discover_modules("managers")
     tool_files = discover_modules("tools")
     input_files = discover_modules("inputs")
+    runnable_files = discover_modules("runnables")
 
-    # Launch custom tools/inputs as separate processes
+    # Launch managers first (map_server, etc.) — tools may depend on them
     procs = []
-    for f in tool_files + input_files:
-        name = os.path.basename(f)
-        print(f"  Launching custom module: {{name}}")
+    for f in manager_files:
+        fname = os.path.basename(f)
+        print(f"  Launching manager: {{fname}}")
         p = multiprocessing.Process(target=run_module, args=(f,), daemon=True)
         p.start()
         procs.append(p)
 
-    # Run andr start (this blocks)
+    if manager_files:
+        time.sleep(2)  # Give managers time to register services
+
+    # Launch tools
+    for f in tool_files:
+        fname = os.path.basename(f)
+        print(f"  Launching tool: {{fname}}")
+        p = multiprocessing.Process(target=run_module, args=(f,), daemon=True)
+        p.start()
+        procs.append(p)
+
+    # Launch inputs (web_ui, etc.)
+    for f in input_files:
+        fname = os.path.basename(f)
+        print(f"  Launching input: {{fname}}")
+        p = multiprocessing.Process(target=run_module, args=(f,), daemon=True)
+        p.start()
+        procs.append(p)
+
+    # Launch runnables (standalone processes)
+    for f in runnable_files:
+        fname = os.path.basename(f)
+        print(f"  Launching runnable: {{fname}}")
+        p = multiprocessing.Process(target=run_module, args=(f,), daemon=True)
+        p.start()
+        procs.append(p)
+
+    # Run andr start (this blocks — starts the hidden core stack)
     sys.argv = start_args
     from andr.cli import main as cli_main
     cli_main()
@@ -633,130 +708,24 @@ if __name__ == "__main__":
     main()
 """)
 
-    # --- tools/__init__.py ---
-    _write(project_dir, "tools/__init__.py", "")
-
-    # --- tools/example_tool.py ---
-    _write(project_dir, "tools/example_tool.py", """\
-\"\"\"Example custom tool.
-
-Rename this file and modify it to create your own tool.
-The tool auto-registers with the running ANDR tool_manager.
-
-Run standalone:  python -m tools.example_tool
-Or let start.py auto-discover it.
-\"\"\"
-
-from andr import BaseAgentTool
-
-
-class ExampleTool(BaseAgentTool):
-    TOOL_NAME = "example"
-    TOOL_DESCRIPTION = "An example tool — replace with your own logic"
-    TOOL_PARAMETERS = [
-        {
-            "name": "message",
-            "type": "string",
-            "required": True,
-            "description": "A message to process",
-        },
-    ]
-
-    def _execute(self, params, goal_handle):
-        message = params.get("message", "")
-        self.get_logger().info(f"ExampleTool received: {message}")
-
-        # Your tool logic here
-        result = f"Processed: {message}"
-
-        return {"status": "done", "result": result}
-
-
-def main(args=None):
-    import rclpy
-    rclpy.init(args=args)
-    node = ExampleTool()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
-
-if __name__ == "__main__":
-    main()
-""")
-
-    # --- inputs/__init__.py ---
-    _write(project_dir, "inputs/__init__.py", "")
-
-    # --- inputs/example_input.py ---
-    _write(project_dir, "inputs/example_input.py", """\
-\"\"\"Example custom input source.
-
-Rename this file and modify it to create your own input source.
-Input sources send tasks to the agent through the task_manager.
-
-Run standalone:  python -m inputs.example_input
-Or let start.py auto-discover it.
-\"\"\"
-
-from andr import BaseInputSource
-from std_msgs.msg import String
-
-
-class ExampleInput(BaseInputSource):
-    SOURCE_NAME = "example"
-    SOURCE_DESCRIPTION = "An example input source — replace with your own logic"
-
-    def __init__(self):
-        super().__init__()
-        # Subscribe to a topic, poll an API, watch a file, etc.
-        # This example listens on a ROS topic:
-        self.create_subscription(
-            String, "/example/input", self._on_message, 10
-        )
-
-    def _on_message(self, msg):
-        if not self.is_busy:
-            self.send_task(
-                prompt=msg.data,
-                context="example_input",
-            )
-
-    def on_task_completed(self, prompt, success, summary):
-        self.get_logger().info(
-            f"Task {'succeeded' if success else 'failed'}: {summary}"
-        )
-
-
-def main(args=None):
-    import rclpy
-    rclpy.init(args=args)
-    node = ExampleInput()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
-
-if __name__ == "__main__":
-    main()
-""")
-
     print(f"""
   {name}/
-    andr.config.yaml      # Project configuration
-    start.py              # Launch script (reads config, auto-discovers tools/inputs)
+    andr.config.yaml          # Project configuration
+    start.py                  # Launch script (auto-discovers everything)
+    managers/
+      map_server.py           # Map management (SQLite, SLAM config, points)
+      migrations/             # Database schema migrations
     tools/
-      example_tool.py     # Example BaseAgentTool — edit or replace
+      walk.py                 # Walk forward/backward via /cmd_vel
+      spin.py                 # Rotate in place via /cmd_vel
+      navigate_to_point.py    # Navigate to a named map point via Nav2
     inputs/
-      example_input.py    # Example BaseInputSource — edit or replace
+      web_ui.py               # Web dashboard + WebSocket bridge to ROS
+    runnables/                # Standalone processes (auto-discovered)
+    ui/
+      static/                 # HTML/CSS/JS for the web dashboard
+        index.html            # Robot dashboard
+        rviz.html             # 2D map visualization
 
   Get started:
     cd {name}
