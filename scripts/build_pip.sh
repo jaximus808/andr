@@ -33,6 +33,9 @@ if [ ! -d "${MSGS_SRC}" ]; then
     source install/setup.bash
 fi
 
+# ── Step 1b: Clean stale egg-info ──────────────────────────────────────
+rm -rf "${PIP_DIR}"/*.egg-info "${PIP_DIR}"/UNKNOWN.egg-info
+
 # ── Step 2: Sync pre-generated andr_msgs bindings ──────────────────────
 echo ">>> Syncing andr_msgs bindings..."
 rm -rf "${PIP_DIR}/andr/_msgs_bind/andr_msgs"
@@ -82,7 +85,14 @@ fi
 echo ">>> Building wheel..."
 cd "${PIP_DIR}"
 rm -rf dist/ build/ *.egg-info
-python3 -m build 2>&1 | tail -5
+mkdir -p dist
+
+if python3 -c "import build" 2>/dev/null; then
+    python3 -m build --wheel --outdir dist/ 2>&1 | tail -5
+else
+    echo "  ('build' module not installed, using pip wheel instead)"
+    pip3 wheel --no-deps --wheel-dir dist/ . 2>&1 | tail -5
+fi
 
 echo ""
 echo ">>> Built:"
