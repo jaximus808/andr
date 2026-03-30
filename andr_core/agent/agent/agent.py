@@ -214,6 +214,7 @@ class AgentServer(Node):
             self._llm_with_tools = self._llm
 
         # Preload the model into GPU memory via Ollama's load API
+        self.get_logger().info("Checking for PreLoading")
         if backend == "ollama":
             self._warmup_ollama(host, model)
 
