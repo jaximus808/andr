@@ -220,17 +220,23 @@ class AgentServer(Node):
         self.get_logger().info("Agent ready (custom ReAct loop with JSON fallback).")
 
     def _warmup_ollama(self, host: str, model: str) -> None:
-        """Preload the Ollama model into GPU memory without generating tokens."""
+        """Preload the Ollama model into GPU memory by running a trivial generation."""
         import urllib.request
         import json
 
         url = f"{host.rstrip('/')}/api/generate"
-        payload = json.dumps({"model": model, "keep_alive": "10m"}).encode()
+        payload = json.dumps({
+            "model": model,
+            "prompt": "hi",
+            "keep_alive": "10m",
+            "options": {"num_predict": 1},
+        }).encode()
         req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
 
         self.get_logger().info(f"Preloading model '{model}' into Ollama...")
         try:
-            urllib.request.urlopen(req, timeout=120)
+            resp = urllib.request.urlopen(req, timeout=120)
+            resp.read()  # consume streaming response to ensure model is fully loaded
             self.get_logger().info("Model preloaded.")
         except Exception as exc:
             self.get_logger().warn(f"Ollama preload failed (non-fatal): {exc}")
