@@ -213,9 +213,64 @@ def _launch_tool_via_ros2(package, executable):
     )
 
 
+def _load_config(path):
+    """Load andr.config.yaml and return the parsed dict (or {})."""
+    if not os.path.isfile(path):
+        return {}
+    try:
+        import yaml
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except ImportError:
+        print("Warning: PyYAML not installed — cannot read config file.")
+        return {}
+    except Exception as e:
+        print(f"Warning: failed to read {path}: {e}")
+        return {}
+
+
+def _apply_config(args, config):
+    """Apply config-file values as defaults — CLI flags take precedence."""
+    llm = config.get("llm", {})
+    agent = config.get("agent", {})
+    ui = config.get("ui", {})
+    brain = config.get("brain", {})
+
+    # Only override if the CLI arg is still at its default value
+    if not args.model and llm.get("model"):
+        args.model = str(llm["model"])
+    if args.backend == "ollama" and llm.get("backend"):
+        args.backend = llm["backend"]
+    if args.host == "http://localhost:11434" and llm.get("host"):
+        args.host = llm["host"]
+    if args.temperature == 0.2 and llm.get("temperature") is not None:
+        args.temperature = float(llm["temperature"])
+    if args.max_iterations == 20 and agent.get("max_iterations") is not None:
+        args.max_iterations = int(agent["max_iterations"])
+    if args.ui_port == 8080 and ui.get("port") is not None:
+        args.ui_port = int(ui["port"])
+    if not args.no_ui and ui.get("enabled") is False:
+        args.no_ui = True
+    if not args.no_brain and brain.get("enabled") is False:
+        args.no_brain = True
+    if not args.enable_wander and brain.get("enable_wander"):
+        args.enable_wander = True
+    if args.wander_interval == 60.0 and brain.get("wander_interval_sec") is not None:
+        args.wander_interval = float(brain["wander_interval_sec"])
+    if not args.no_resume and brain.get("resume_preempted") is False:
+        args.no_resume = True
+
+
 def cmd_start(args):
     """Start the ANDR agent stack."""
     _check_ros()
+
+    # Load config file (auto-detect in cwd, or explicit --config path)
+    config_path = getattr(args, "config", None) or os.path.join(os.getcwd(), "andr.config.yaml")
+    config = _load_config(config_path)
+    if config:
+        print(f"  Loaded config from {config_path}")
+        _apply_config(args, config)
 
     # Ensure our bundled andr_msgs are set up
     from andr._setup_msgs import setup as _setup_msgs
@@ -754,6 +809,8 @@ def main():
 
     # --- andr start ---
     p_start = sub.add_parser("start", help="Start the ANDR agent stack")
+    p_start.add_argument("--config", default=None,
+                         help="Path to andr.config.yaml (default: auto-detect in cwd)")
     p_start.add_argument("--backend", default="ollama", choices=["ollama", "openai"],
                          help="LLM backend (default: ollama)")
     p_start.add_argument("--model", default="", help="Model name (e.g., llama3.2, gpt-4o)")
