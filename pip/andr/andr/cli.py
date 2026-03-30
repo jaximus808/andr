@@ -307,9 +307,16 @@ def cmd_start(args):
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
+    if not args.model:
+        print("Error: no model specified.")
+        print("Either:")
+        print("  1. Set 'model' in andr.config.yaml  (run 'andr init' to create one)")
+        print("  2. Pass --model on the CLI:  andr start --model qwen2.5:7b")
+        sys.exit(1)
+
     print("Starting ANDR stack...")
     print(f"  Backend:  {args.backend}")
-    print(f"  Model:    {args.model or '(default)'}")
+    print(f"  Model:    {args.model}")
     print(f"  Host:     {args.host}")
     print()
 
