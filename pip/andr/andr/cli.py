@@ -269,8 +269,11 @@ def cmd_start(args):
     config_path = getattr(args, "config", None) or os.path.join(os.getcwd(), "andr.config.yaml")
     config = _load_config(config_path)
     if config:
-        print(f"  Loaded config from {config_path}")
+        print(f"  Config:   loaded from {config_path}")
         _apply_config(args, config)
+    else:
+        print(f"  Config:   no config file found (using CLI defaults)")
+        print(f"            looked for: {config_path}")
 
     # Ensure our bundled andr_msgs are set up
     from andr._setup_msgs import setup as _setup_msgs
@@ -800,15 +803,75 @@ def main():
     parser = argparse.ArgumentParser(
         prog="andr",
         description="ANDR — LLM agent framework for robotics",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Commands:
+  init      Create a new ANDR project workspace
+  start     Start the ANDR agent stack
+  task      Send a task to the running agent
+  status    Check which ANDR nodes are running
+
+Run 'andr <command> -h' for detailed help on each command.
+""",
     )
     sub = parser.add_subparsers(dest="command")
 
     # --- andr init ---
-    p_init = sub.add_parser("init", help="Create a new ANDR project workspace")
+    p_init = sub.add_parser(
+        "init",
+        help="Create a new ANDR project workspace",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Scaffolds a new ANDR project directory with:
+  andr.config.yaml          Project configuration
+  start.py                  Launch script (auto-discovers everything)
+  managers/                 Service managers (map_server, migrations)
+  tools/                    Robot tools (walk, spin, navigate_to_point)
+  inputs/                   Input sources (web_ui)
+  runnables/                Standalone processes
+  ui/static/                Web dashboard HTML/CSS/JS
+
+Example:
+  andr init my_robot
+  cd my_robot
+  python start.py
+""",
+    )
     p_init.add_argument("name", help="Project name (creates a directory)")
 
     # --- andr start ---
-    p_start = sub.add_parser("start", help="Start the ANDR agent stack")
+    available_tools = ", ".join(sorted(TOOL_MAP.keys()))
+    p_start = sub.add_parser(
+        "start",
+        help="Start the ANDR agent stack",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""\
+Launches the full ANDR stack: tool_manager, prompt_manager, task_manager,
+task_brain, agent, and (optionally) the web UI.
+
+Available tools (use with --tools):
+  {available_tools}
+
+Configuration:
+  Settings are read from andr.config.yaml (auto-detected in cwd, or via
+  --config). CLI flags override config file values.
+
+Components started:
+  tool_manager      C++ skill registry and dispatcher
+  prompt_manager    System prompt management
+  task_manager      Routes tasks to the agent
+  task_brain        Priority scheduler, preemption, wander mode
+  agent             LLM ReAct loop (calls tools via tool_manager)
+  web UI            FastAPI + WebSocket dashboard (port 8080)
+
+Examples:
+  andr start
+  andr start --backend openai --model gpt-4o
+  andr start --tools speak,walk,spin
+  andr start --no-ui --no-brain
+  andr start --enable-wander --wander-interval 120
+""",
+    )
     p_start.add_argument("--config", default=None,
                          help="Path to andr.config.yaml (default: auto-detect in cwd)")
     p_start.add_argument("--backend", default="ollama", choices=["ollama", "openai"],
@@ -826,12 +889,49 @@ def main():
     p_start.add_argument("--no-resume", action="store_true", help="Don't resume preempted tasks")
 
     # --- andr task ---
-    p_task = sub.add_parser("task", help="Send a task to the running agent")
+    p_task = sub.add_parser(
+        "task",
+        help="Send a task to the running agent",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Sends a task to the running ANDR agent via /task_manager/execute.
+The agent will process the prompt using its ReAct loop and available tools.
+
+Requires ANDR to be running (andr start).
+
+Examples:
+  andr task "Say hello"
+  andr task "Walk forward 2 meters"
+  andr task "Navigate to the kitchen" --context "map:home"
+  andr task Check your battery level
+""",
+    )
     p_task.add_argument("prompt", nargs="+", help="The task prompt")
     p_task.add_argument("--context", default="", help="Optional context string")
 
     # --- andr status ---
-    sub.add_parser("status", help="Check which ANDR nodes are running")
+    sub.add_parser(
+        "status",
+        help="Check which ANDR nodes are running",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Shows the status of all ANDR nodes by querying the ROS 2 node graph.
+
+Checks for:
+  agent_server      Agent (LLM ReAct loop)
+  task_brain        Task Brain (scheduler/preemption)
+  task_manager      Task Manager
+  tool_manager      Tool Manager
+  prompt_manager    Prompt Manager
+  ui_server         Web UI
+  + any registered tool nodes
+
+Requires ROS 2 to be running.
+
+Example:
+  andr status
+""",
+    )
 
     args = parser.parse_args()
 

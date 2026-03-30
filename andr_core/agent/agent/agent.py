@@ -207,7 +207,27 @@ class AgentServer(Node):
             )
             self._llm_with_tools = self._llm
 
+        # Preload the model into GPU memory via Ollama's load API
+        if backend == "ollama":
+            self._warmup_ollama(host, model)
+
         self.get_logger().info("Agent ready (custom ReAct loop with JSON fallback).")
+
+    def _warmup_ollama(self, host: str, model: str) -> None:
+        """Preload the Ollama model into GPU memory without generating tokens."""
+        import urllib.request
+        import json
+
+        url = f"{host.rstrip('/')}/api/generate"
+        payload = json.dumps({"model": model or "llama3.2", "keep_alive": "10m"}).encode()
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+
+        self.get_logger().info(f"Preloading model '{model}' into Ollama...")
+        try:
+            urllib.request.urlopen(req, timeout=120)
+            self.get_logger().info("Model preloaded.")
+        except Exception as exc:
+            self.get_logger().warn(f"Ollama preload failed (non-fatal): {exc}")
 
     def _setup_action_server(self) -> None:
         self._cb_group = ReentrantCallbackGroup()
