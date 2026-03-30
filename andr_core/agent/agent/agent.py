@@ -88,19 +88,25 @@ def _parse_raw_tool_call(text: str) -> dict | None:
 
 def _create_langchain_llm(backend: str, model: str, host: str, temperature: float):
     """Instantiate the appropriate LangChain chat model."""
+    if not model:
+        raise ValueError(
+            "No model specified. Set 'model' in andr.config.yaml or pass --model on the CLI."
+        )
+
     if backend == "ollama":
         from langchain_ollama import ChatOllama
-        kwargs = {"temperature": temperature, "num_ctx": 8192, "keep_alive": "10m"}
-        if model:
-            kwargs["model"] = model
-        kwargs["base_url"] = host
+        kwargs = {
+            "model": model,
+            "temperature": temperature,
+            "num_ctx": 8192,
+            "keep_alive": "10m",
+            "base_url": host,
+        }
         return ChatOllama(**kwargs)
 
     if backend == "openai":
         from langchain_openai import ChatOpenAI
-        kwargs = {"temperature": temperature}
-        if model:
-            kwargs["model"] = model
+        kwargs = {"model": model, "temperature": temperature}
         return ChatOpenAI(**kwargs)
 
     raise ValueError(
@@ -219,7 +225,7 @@ class AgentServer(Node):
         import json
 
         url = f"{host.rstrip('/')}/api/generate"
-        payload = json.dumps({"model": model or "llama3.2", "keep_alive": "10m"}).encode()
+        payload = json.dumps({"model": model, "keep_alive": "10m"}).encode()
         req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
 
         self.get_logger().info(f"Preloading model '{model}' into Ollama...")
