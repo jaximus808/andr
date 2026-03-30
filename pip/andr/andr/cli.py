@@ -165,22 +165,34 @@ def _find_tool_manager():
 
     Search order:
       1. ANDR_TOOL_MANAGER_BIN env var
-      2. Bundled binary inside the pip package
-      3. ROS 2 workspace (ros2 run)
-      4. System PATH
+      2. Colcon install directory (auto-detected repo root)
+      3. Bundled binary inside the pip package
+      4. ROS 2 workspace (ros2 run)
+      5. System PATH
     """
     # 1. Explicit env var
     env_bin = os.environ.get("ANDR_TOOL_MANAGER_BIN")
     if env_bin and os.path.isfile(env_bin):
         return env_bin
 
-    # 2. Bundled binary (shipped with pip install andr)
+    # 2. Colcon install (auto-detect from repo root)
+    from andr._setup_msgs import _find_repo_root
+    repo_root = _find_repo_root()
+    if repo_root:
+        colcon_bin = os.path.join(
+            repo_root, "install", "tool_manager", "lib",
+            "tool_manager", "tool_manager_node",
+        )
+        if os.path.isfile(colcon_bin):
+            return colcon_bin
+
+    # 3. Bundled binary (shipped with pip install andr)
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     bundled = os.path.join(pkg_dir, "bin", "tool_manager_node")
     if os.path.isfile(bundled):
         return bundled
 
-    # 3. ROS 2 workspace
+    # 4. ROS 2 workspace
     result = subprocess.run(
         ["ros2", "pkg", "prefix", "tool_manager"],
         capture_output=True, text=True,
@@ -188,7 +200,7 @@ def _find_tool_manager():
     if result.returncode == 0:
         return "ros2_run"
 
-    # 4. System PATH
+    # 5. System PATH
     path_bin = shutil.which("tool_manager_node")
     if path_bin:
         return path_bin
@@ -267,12 +279,14 @@ def cmd_start(args):
         ))
     else:
         print("  [ok]   Starting tool_manager...")
-        # Set LD_LIBRARY_PATH so the binary can find bundled andr_msgs .so files
+        # Set LD_LIBRARY_PATH so the binary can find andr_msgs + ROS .so files
         tm_env = os.environ.copy()
         pkg_dir = os.path.dirname(os.path.abspath(__file__))
         libs_dir = os.path.join(pkg_dir, "_libs")
+        from andr._setup_msgs import _find_ros_lib_dirs
+        extra_dirs = [libs_dir] + _find_ros_lib_dirs()
         ld_path = tm_env.get("LD_LIBRARY_PATH", "")
-        tm_env["LD_LIBRARY_PATH"] = libs_dir + ":" + ld_path
+        tm_env["LD_LIBRARY_PATH"] = ":".join(extra_dirs) + ":" + ld_path
         processes.append(subprocess.Popen([tm], env=tm_env))
 
     time.sleep(1)
