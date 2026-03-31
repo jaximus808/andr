@@ -1,0 +1,7 @@
+---
+string[] store_names
+string[] backends
+string[] paths
+int64[] doc_counts
+int64[] size_bytes
+int64[] max_size_bytes

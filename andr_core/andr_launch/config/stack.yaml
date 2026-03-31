@@ -16,6 +16,27 @@ llm:
   host: http://localhost:11434
   temperature: 0.2
 
+# ─── Memory configuration ────────────────────────────────────────────────────
+#
+# The memory_manager node manages named stores on disk.  Each store has its
+# own backend, path, size limit, and eviction policy.  The agent discovers
+# store_memory / query_memory tools via tool_manager automatically.
+#
+# on_full options:
+#   reject  — refuse new entries when the store hits its size limit
+#   evict   — delete oldest entries to make room (FIFO eviction)
+#   warn    — log a warning but allow storage anyway
+memory:
+  default_store: default
+  top_k: 4
+  stores:
+    default:
+      backend: chroma
+      path: ~/.andr/memory/default
+      max_size_mb: 512
+      embedding_model: all-MiniLM-L6-v2
+      on_full: warn
+
 # ─── Core infrastructure ─────────────────────────────────────────────────────
 core:
   task_brain:
@@ -33,11 +54,12 @@ core:
   agent:
     enabled: true
     params:
-      memory_backend: chroma
-      memory_top_k: 4
       max_iterations: 20
 
   prompt_manager:
+    enabled: true
+
+  memory_manager:
     enabled: true
 
   tool_manager:
@@ -78,6 +100,16 @@ tools:
     enabled: true
     package: andr_skills
     executable: gesture_server
+
+  store_memory:
+    enabled: true
+    package: agent
+    executable: store_memory_server
+
+  query_memory:
+    enabled: true
+    package: agent
+    executable: query_memory_server
 
   vision:
     enabled: false                 # VLM tool — not ready yet

@@ -48,6 +48,7 @@ All tasks flow through `task_manager`, regardless of origin. This ensures consis
 | **agent_server** | LLM ReAct loop — reasons, calls tools, produces answers |
 | **tool_manager** | C++ registry — discovers, registers, and routes tool calls |
 | **prompt_manager** | Manages versioned system prompts |
+| **memory_manager** | Multi-store RAG memory (ChromaDB), size management |
 | **Tool servers** | Individual action servers (one per capability) |
 | **Input sources** | Bridges that send tasks into the pipeline |
 | **Web UI** | FastAPI + WebSocket dashboard |

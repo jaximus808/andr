@@ -33,12 +33,15 @@ llm_model           string  qwen2.5:3b  Model name (e.g. qwen2.5:3b, llama3.2, g
 llm_host            string  http://localhost:11434
 llm_temperature     double  0.2
 
-memory_backend      string  chroma      RAG backend: chroma
-memory_top_k        int     4
+memory_stores_json  string  '{...}'     JSON-serialised memory stores config
+memory_default_store string default     Name of the default memory store
+memory_top_k        int     4           Default top_k for memory queries
 max_iterations      int     20
 """
 
 from __future__ import annotations
+
+import json
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -50,6 +53,17 @@ from launch.actions import (
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+
+_DEFAULT_MEMORY_STORES = json.dumps({
+    "default": {
+        "backend": "chroma",
+        "path": "~/.andr/memory/default",
+        "max_size_mb": 512,
+        "embedding_model": "all-MiniLM-L6-v2",
+        "on_full": "warn",
+    }
+})
 
 
 def _agent_node(context, *args, **kwargs) -> list:
@@ -70,9 +84,29 @@ def _agent_node(context, *args, **kwargs) -> list:
             "llm_model":         cfg("llm_model"),
             "llm_host":          cfg("llm_host"),
             "llm_temperature":   float(cfg("llm_temperature")),
-            "memory_backend":    cfg("memory_backend"),
-            "memory_top_k":      int(cfg("memory_top_k")),
             "max_iterations":    int(cfg("max_iterations")),
+        }],
+    )
+    return [node]
+
+
+def _memory_manager_node(context, *args, **kwargs) -> list:
+    """Build the memory_manager Node with stores config."""
+
+    def cfg(name: str):
+        return LaunchConfiguration(name).perform(context)
+
+    node = Node(
+        package="agent",
+        executable="memory_manager",
+        name="memory_manager",
+        output="screen",
+        emulate_tty=True,
+        arguments=["--ros-args", "--log-level", cfg("log_level")],
+        parameters=[{
+            "stores_json":     cfg("memory_stores_json"),
+            "default_store":   cfg("memory_default_store"),
+            "default_top_k":   int(cfg("memory_top_k")),
         }],
     )
     return [node]
@@ -90,7 +124,7 @@ def generate_launch_description() -> LaunchDescription:
                               description="Start the agent_server Python node"),
         DeclareLaunchArgument("launch_task_mgr", default_value="true",
                               description="Start the task_manager_server node"),
-DeclareLaunchArgument("launch_ui",    default_value="true",
+        DeclareLaunchArgument("launch_ui",    default_value="true",
                               description="Start the andr_ui web dashboard"),
         DeclareLaunchArgument("ui_port",      default_value="8080",
                               description="Port for the andr_ui web server"),
@@ -106,10 +140,13 @@ DeclareLaunchArgument("launch_ui",    default_value="true",
         DeclareLaunchArgument("llm_host",        default_value="http://localhost:11434"),
         DeclareLaunchArgument("llm_temperature", default_value="0.2"),
 
-        # ── Memory / RAG ──────────────────────────────────────────────
-        DeclareLaunchArgument("memory_backend",    default_value="chroma",
-                              description="chroma"),
-        DeclareLaunchArgument("memory_top_k",      default_value="4"),
+        # ── Memory ────────────────────────────────────────────────────
+        DeclareLaunchArgument("memory_stores_json", default_value=_DEFAULT_MEMORY_STORES,
+                              description="JSON-serialised memory stores config"),
+        DeclareLaunchArgument("memory_default_store", default_value="default",
+                              description="Name of the default memory store"),
+        DeclareLaunchArgument("memory_top_k",    default_value="4",
+                              description="Default top_k for memory queries"),
 
         # ── Loop tuning ───────────────────────────────────────────────
         DeclareLaunchArgument("max_iterations",  default_value="20"),
@@ -135,6 +172,11 @@ DeclareLaunchArgument("launch_ui",    default_value="true",
         emulate_tty=True,
         arguments=["--ros-args", "--log-level",
                    LaunchConfiguration("log_level")],
+        condition=IfCondition(LaunchConfiguration("launch_agent")),
+    )
+
+    memory_manager_action = OpaqueFunction(
+        function=_memory_manager_node,
         condition=IfCondition(LaunchConfiguration("launch_agent")),
     )
 
@@ -168,17 +210,18 @@ DeclareLaunchArgument("launch_ui",    default_value="true",
         "          ANDR Stack launching\n",
         "  brain   -> andr_brain\n",
         "  agent   -> agent_server  (agent/prompt)\n",
+        "  memory  -> memory_manager (memory_manager/*)\n",
         "  tasks   -> task_manager  (/task_manager/execute)\n",
         "  ui      -> http://localhost:",
         LaunchConfiguration("ui_port"), "\n",
         "======================================================\n",
         "  llm_backend   = ", LaunchConfiguration("llm_backend"),  "\n",
         "  llm_model     = ", LaunchConfiguration("llm_model"),    "\n",
-        "  memory_backend= ", LaunchConfiguration("memory_backend"), "\n",
         "  log_level     = ", LaunchConfiguration("log_level"),   "\n",
     ])
 
     return LaunchDescription([
         *args, startup_msg,
-        brain_node, prompt_manager_node, agent_node_action, task_manager_node, ui_process,
+        brain_node, prompt_manager_node, memory_manager_action,
+        agent_node_action, task_manager_node, ui_process,
     ])

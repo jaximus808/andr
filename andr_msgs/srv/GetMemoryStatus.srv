@@ -1,0 +1,12 @@
+string store_name
+---
+bool success
+string store_name
+string backend
+string path
+int64 doc_count
+int64 size_bytes
+int64 max_size_bytes
+string embedding_model
+string on_full
+string message

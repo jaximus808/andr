@@ -24,6 +24,7 @@ log_level   string  (from config, default info)   Override log level.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -61,6 +62,7 @@ def _build_nodes(context, *args, **kwargs) -> list:
     ros_args = ["--ros-args", "--log-level", log_level]
 
     llm_cfg = cfg.get("llm", {})
+    memory_cfg = cfg.get("memory", {})
     core = cfg.get("core", {})
     tools_cfg = cfg.get("tools", {})
     inputs_cfg = cfg.get("inputs", {})
@@ -136,6 +138,35 @@ def _build_nodes(context, *args, **kwargs) -> list:
         summary_lines.append(
             f"  [core] agent          ({llm_cfg.get('backend', 'ollama')}/"
             f"{llm_cfg.get('model', 'qwen2.5:3b')})\n"
+        )
+
+    # ── Core: memory_manager ────────────────────────────────────────────
+    if core.get("memory_manager", {}).get("enabled", False):
+        stores_json = json.dumps(memory_cfg.get("stores", {
+            "default": {
+                "backend": "chroma",
+                "path": "~/.andr/memory/default",
+                "max_size_mb": 512,
+                "embedding_model": "all-MiniLM-L6-v2",
+                "on_full": "warn",
+            }
+        }))
+        nodes.append(Node(
+            package="agent",
+            executable="memory_manager",
+            name="memory_manager",
+            output="screen",
+            emulate_tty=True,
+            arguments=ros_args,
+            parameters=[{
+                "stores_json": stores_json,
+                "default_store": memory_cfg.get("default_store", "default"),
+                "default_top_k": memory_cfg.get("top_k", 4),
+            }],
+        ))
+        store_count = len(memory_cfg.get("stores", {"default": {}}))
+        summary_lines.append(
+            f"  [core] memory_manager ({store_count} store(s))\n"
         )
 
     # ── Core: tool_manager ───────────────────────────────────────────────

@@ -1,0 +1,7 @@
+string text
+string metadata_json
+string store_name
+---
+bool success
+string id
+string message

@@ -58,6 +58,34 @@ andr start --enable-wander --wander-interval 30
 
 See [CLI Reference](../reference/cli.md) for the full list.
 
+## Memory configuration
+
+The memory system stores persistent RAG knowledge. See the full [Memory Guide](memory.md) for details.
+
+```yaml
+memory:
+  default_store: default
+  top_k: 4
+  stores:
+    default:
+      backend: chroma
+      path: ~/.andr/memory/default
+      max_size_mb: 512
+      embedding_model: all-MiniLM-L6-v2
+      on_full: warn          # reject | evict | warn
+    # long_term:
+    #   backend: chroma
+    #   path: /mnt/external/memory
+    #   max_size_mb: 2048
+    #   on_full: evict
+```
+
+CLI flags:
+
+```bash
+andr start --memory-path ~/.andr/memory/default --memory-max-size-mb 512 --memory-on-full warn
+```
+
 ## Runtime configuration (no restart)
 
 If running from a colcon workspace, you can change settings without restarting:

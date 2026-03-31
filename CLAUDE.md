@@ -92,7 +92,7 @@ sensors or tools. Tool descriptions come from the tool registry at runtime.
 | Package | Location | Language | Role |
 |---|---|---|---|
 | `andr_msgs` | `andr_msgs/` | C++ (rosidl) | All message, service, and action definitions |
-| `agent` | `andr_core/agent/` | Python | LLM agent with ReAct loop, memory, prompt management |
+| `agent` | `andr_core/agent/` | Python | LLM agent with ReAct loop, memory_manager, prompt management |
 | `task_manager` | `andr_core/task_manager/` | Python | Routes tasks from any input source to the agent |
 | `tool_manager` | `andr_core/tool_manager/` | C++ | Discovers and dispatches tool calls to skill servers |
 | `andr_tools` | `andr_core/andr_tools/` | Python | Base classes: BaseAgentTool, BaseInputSource |
@@ -197,6 +197,9 @@ ros2 run agent agent
 | Tool execution | Action | `/tools/<name>` (ExecuteSkill) |
 | Tool listing | Service | `tool_manager/list` |
 | System prompt | Service | `prompt_manager/get_system_prompt` |
+| Memory store | Service | `memory_manager/store` (StoreMemory) |
+| Memory query | Service | `memory_manager/query` (QueryMemory) |
+| Memory status | Service | `memory_manager/list_stores` (ListMemoryStores) |
 | Vision scene | Topic | `/vision/scene` (std_msgs/String) |
 
 ## Message types are in `andr_msgs`

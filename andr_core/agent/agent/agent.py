@@ -8,14 +8,16 @@ raw JSON) → execute via tool_manager → feed result back → repeat.
 The agent dynamically discovers available tools by calling the
 ``tool_manager/list`` service at startup.
 
+Memory is handled by the separate ``memory_manager`` node.  The agent
+interacts with memory exclusively through the ``store_memory`` and
+``query_memory`` tools (BaseAgentTools registered with tool_manager).
+
 ROS 2 parameters
 ----------------
 llm_backend         string   "ollama"        # "ollama" | "openai"
 llm_model           string   ""              # model name (e.g. "llama3", "gpt-4o")
 llm_host            string   "http://localhost:11434"
 llm_temperature     float    0.2
-memory_backend      string   "chroma"
-memory_top_k        int      4
 max_iterations      int      20
 """
 
@@ -33,7 +35,6 @@ from rclpy.node import Node
 from andr_msgs.action import Agent
 from andr_msgs.srv import GetAgentConfig, SetAgentConfig, GetSystemPrompt
 
-from .memory import create_memory, MemoryStore
 from .skills import SkillsRegistry, SkillExecutor
 from .tools import create_tools_from_registry
 from .prompts.system_prompt import DEFAULT_SYSTEM_PROMPT
@@ -116,7 +117,6 @@ class AgentServer(Node):
     def __init__(self):
         super().__init__("agent_server")
         self._declare_parameters()
-        self._setup_memory()
         self._setup_skills()
         self._system_prompt = self._fetch_system_prompt()
         self._setup_langchain()
@@ -132,15 +132,7 @@ class AgentServer(Node):
         self.declare_parameter("llm_model",        "")
         self.declare_parameter("llm_host",         "http://localhost:11434")
         self.declare_parameter("llm_temperature",  0.2)
-        self.declare_parameter("memory_backend",   "chroma")
-        self.declare_parameter("memory_top_k",     4)
         self.declare_parameter("max_iterations",   20)
-
-    def _setup_memory(self) -> None:
-        backend = self._str("memory_backend")
-        self._memory_top_k = self.get_parameter("memory_top_k").get_parameter_value().integer_value
-        self._memory: MemoryStore = create_memory(backend)
-        self.get_logger().info(f"Memory: backend='{backend}' top_k={self._memory_top_k}")
 
     def _setup_skills(self) -> None:
         print("Discovering skills from tool_manager…")
@@ -185,12 +177,12 @@ class AgentServer(Node):
         )
         self._llm = _create_langchain_llm(backend, model, host, temperature)
 
-        # Build LangChain tools from the skills registry + RAG
+        # Build LangChain tools from the skills registry.
+        # Memory tools (store_memory, query_memory) are registered with
+        # tool_manager as BaseAgentTools and discovered automatically.
         self._tools = create_tools_from_registry(
             registry=self._skills,
             executor=self._skill_executor,
-            memory=self._memory,
-            memory_top_k=self._memory_top_k,
         )
         self._tools_by_name = {t.name: t for t in self._tools}
         self.get_logger().info(f"LangChain tools: {list(self._tools_by_name.keys())}")
@@ -239,8 +231,6 @@ class AgentServer(Node):
         res.llm_host = self._str("llm_host")
         res.llm_temperature = self.get_parameter("llm_temperature").get_parameter_value().double_value
         res.max_iterations = self.get_parameter("max_iterations").get_parameter_value().integer_value
-        res.memory_backend = self._str("memory_backend")
-        res.memory_top_k = self.get_parameter("memory_top_k").get_parameter_value().integer_value
         return res
 
     def _handle_set_config(self, req, res):
@@ -502,8 +492,6 @@ class AgentServer(Node):
         self._tools = create_tools_from_registry(
             registry=self._skills,
             executor=self._skill_executor,
-            memory=self._memory,
-            memory_top_k=self._memory_top_k,
         )
         self._tools_by_name = {t.name: t for t in self._tools}
         self.get_logger().info(f"Rebuilt LangChain tools: {list(self._tools_by_name.keys())}")

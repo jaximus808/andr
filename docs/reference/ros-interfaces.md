@@ -22,6 +22,10 @@ All message types are defined in the `andr_msgs` package.
 | `agent/set_config` | `SetAgentConfig` | Update agent LLM config |
 | `prompt_manager/get_system_prompt` | `GetSystemPrompt` | Get system prompt |
 | `prompt_manager/set_system_prompt` | `SetSystemPrompt` | Update system prompt |
+| `memory_manager/store` | `StoreMemory` | Store entry in memory |
+| `memory_manager/query` | `QueryMemory` | Search memory (fan-out all stores) |
+| `memory_manager/list_stores` | `ListMemoryStores` | List configured stores |
+| `memory_manager/status` | `GetMemoryStatus` | Status of a single store |
 
 ## Topics
 
@@ -35,5 +39,6 @@ All message types are defined in the `andr_msgs` package.
 ```python
 from andr_msgs.action import ExecuteSkill, TaskGoal, Agent
 from andr_msgs.srv import RegisterTool, ListTools, SaveMap
+from andr_msgs.srv import StoreMemory, QueryMemory, ListMemoryStores, GetMemoryStatus
 from andr_msgs.msg import Prompt, RobotSpeech
 ```

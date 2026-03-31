@@ -35,6 +35,10 @@ setup(
         'console_scripts': [
             'agent_server = agent.agent:main',
             'prompt_manager = agent.prompt_manager:main',
+            'memory_manager = agent.memory_manager:main',
+            'memory_tools = agent.memory_tools:main',
+            'store_memory_server = agent.memory_tools:store_main',
+            'query_memory_server = agent.memory_tools:query_main',
         ],
     },
 )

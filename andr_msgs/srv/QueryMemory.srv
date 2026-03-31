@@ -1,0 +1,7 @@
+string query
+int32 top_k
+string store_name
+---
+bool success
+string results_json
+string message

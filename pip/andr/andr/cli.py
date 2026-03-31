@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import multiprocessing
 import os
@@ -101,8 +102,6 @@ def _run_agent(backend, model, host, temperature, max_iterations):
 
     logging.basicConfig(level=logging.DEBUG)
 
-    # Pass parameters via ROS args so they're set BEFORE the node's __init__
-    # reads them (AgentServer calls _setup_langchain in __init__)
     ros_args = [
         "--ros-args",
         "-p", f"llm_backend:={backend}",
@@ -157,6 +156,57 @@ def _run_task_brain(enable_wander, wander_interval, resume_preempted):
         pass
     finally:
         brain.destroy()
+        rclpy.shutdown()
+
+
+def _run_memory_manager(stores_json, default_store, default_top_k):
+    """Run memory_manager node in-process."""
+    import rclpy
+
+    logging.basicConfig(level=logging.INFO)
+
+    ros_args = [
+        "--ros-args",
+        "-p", f"stores_json:={stores_json}",
+        "-p", f"default_store:={default_store}",
+        "-p", f"default_top_k:={default_top_k}",
+    ]
+    rclpy.init(args=ros_args)
+
+    from andr.runtime.agent.memory_manager import MemoryManagerNode
+
+    node = MemoryManagerNode()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, Exception):
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def _run_memory_tools():
+    """Run store_memory + query_memory tools in-process."""
+    import rclpy
+    from rclpy.executors import MultiThreadedExecutor
+
+    logging.basicConfig(level=logging.INFO)
+    rclpy.init()
+
+    from andr.runtime.agent.memory_tools import StoreMemoryTool, QueryMemoryTool
+
+    store_node = StoreMemoryTool()
+    query_node = QueryMemoryTool()
+    executor = MultiThreadedExecutor()
+    executor.add_node(store_node)
+    executor.add_node(query_node)
+    try:
+        executor.spin()
+    except (KeyboardInterrupt, Exception):
+        pass
+    finally:
+        store_node.destroy_node()
+        query_node.destroy_node()
         rclpy.shutdown()
 
 
@@ -298,14 +348,35 @@ def cmd_start(args):
     mp_procs.append(p)
     time.sleep(1)
 
-    # 3. Task manager (Python — runs from bundled code)
+    # 3. Memory manager (Python — multi-store RAG memory)
+    stores_cfg = {
+        "default": {
+            "backend": "chroma",
+            "path": os.path.expanduser(args.memory_path),
+            "max_size_mb": args.memory_max_size_mb,
+            "embedding_model": "all-MiniLM-L6-v2",
+            "on_full": args.memory_on_full,
+        }
+    }
+    stores_json = json.dumps(stores_cfg)
+    print(f"  [ok]   Starting memory_manager... (path={args.memory_path})")
+    p = multiprocessing.Process(
+        target=_run_memory_manager,
+        args=(stores_json, "default", 4),
+        daemon=True,
+    )
+    p.start()
+    mp_procs.append(p)
+    time.sleep(1)
+
+    # 4. Task manager (Python — runs from bundled code)
     print("  [ok]   Starting task_manager...")
     p = multiprocessing.Process(target=_run_task_manager, daemon=True)
     p.start()
     mp_procs.append(p)
     time.sleep(1)
 
-    # 4. Task brain (Python — priority scheduler, preemption, wander)
+    # 5. Task brain (Python — priority scheduler, preemption, wander)
     if not args.no_brain:
         wander = args.enable_wander
         wander_label = f" wander={'on' if wander else 'off'}"
@@ -318,7 +389,7 @@ def cmd_start(args):
         p.start()
         mp_procs.append(p)
 
-    # 5. Agent (Python — runs from bundled code)
+    # 6. Agent (Python — runs from bundled code)
     print("  [ok]   Starting agent...")
     p = multiprocessing.Process(
         target=_run_agent,
@@ -328,7 +399,13 @@ def cmd_start(args):
     p.start()
     mp_procs.append(p)
 
-    # 6. Tools (need andr-robo or colcon workspace)
+    # 7. Memory tools (store_memory + query_memory — bundled BaseAgentTools)
+    print("  [ok]   Starting memory tools (store_memory, query_memory)...")
+    p = multiprocessing.Process(target=_run_memory_tools, daemon=True)
+    p.start()
+    mp_procs.append(p)
+
+    # 8. Tools (need andr-robo or colcon workspace)
     if args.tools:
         tool_names = [t.strip() for t in args.tools.split(",")]
         for name in tool_names:
@@ -342,7 +419,7 @@ def cmd_start(args):
             processes.append(_launch_tool_via_ros2(pkg, exe))
             print(f"  [ok]   Starting tool: {name}")
 
-    # 7. UI (bundled — runs from pip package)
+    # 9. UI (bundled — runs from pip package)
     if not args.no_ui:
         print(f"  [ok]   Starting UI on port {args.ui_port}")
         p = multiprocessing.Process(target=_run_ui, args=(args.ui_port,), daemon=True)
@@ -452,6 +529,7 @@ def cmd_status(args):
         "task_manager": "Task Manager",
         "tool_manager": "Tool Manager",
         "prompt_manager": "Prompt Manager",
+        "memory_manager": "Memory Manager (RAG stores)",
         "ui_server": "Web UI",
     }
 
@@ -525,6 +603,27 @@ ui:
   enabled: true
   port: 8080
 
+# Memory (RAG knowledge base)
+# The memory_manager stores and retrieves information across sessions.
+# The agent can use store_memory / query_memory tools automatically.
+memory:
+  default_store: default
+  top_k: 4
+  stores:
+    default:
+      backend: chroma
+      path: ~/.andr/memory/default
+      max_size_mb: 512                 # 0 = unlimited
+      embedding_model: all-MiniLM-L6-v2
+      on_full: warn                    # reject | evict | warn
+    # Add more stores on different disks:
+    # long_term:
+    #   backend: chroma
+    #   path: /mnt/external/andr_memory
+    #   max_size_mb: 2048
+    #   embedding_model: all-MiniLM-L6-v2
+    #   on_full: evict
+
 # System prompt (optional — override the default)
 # system_prompt: |
 #   You are a helpful robot assistant...
@@ -594,6 +693,15 @@ def main():
     agent = config.get("agent", {{}})
     ui = config.get("ui", {{}})
     brain = config.get("brain", {{}})
+    memory = config.get("memory", {{}})
+
+    # Resolve the default memory store path
+    stores = memory.get("stores", {{}})
+    default_store_name = memory.get("default_store", "default")
+    default_store = stores.get(default_store_name, {{}})
+    memory_path = default_store.get("path", "~/.andr/memory/default")
+    memory_max_size = default_store.get("max_size_mb", 512)
+    memory_on_full = default_store.get("on_full", "warn")
 
     # Build andr start args
     start_args = [
@@ -605,6 +713,9 @@ def main():
         "--max-iterations", str(agent.get("max_iterations", 20)),
         "--ui-port", str(ui.get("port", 8080)),
         "--wander-interval", str(brain.get("wander_interval_sec", 60.0)),
+        "--memory-path", memory_path,
+        "--memory-max-size-mb", str(memory_max_size),
+        "--memory-on-full", memory_on_full,
     ]
 
     if not ui.get("enabled", True):
@@ -812,6 +923,12 @@ def main():
     p_start.add_argument("--enable-wander", action="store_true", help="Enable wander mode (idle prompts when no tasks)")
     p_start.add_argument("--wander-interval", type=float, default=60.0, help="Seconds between wander prompts (default: 60)")
     p_start.add_argument("--no-resume", action="store_true", help="Don't resume preempted tasks")
+    p_start.add_argument("--memory-path", default="~/.andr/memory/default",
+                         help="Directory for memory storage (default: ~/.andr/memory/default)")
+    p_start.add_argument("--memory-max-size-mb", type=int, default=512,
+                         help="Max memory store size in MB (default: 512, 0=unlimited)")
+    p_start.add_argument("--memory-on-full", default="warn", choices=["reject", "evict", "warn"],
+                         help="Policy when memory store is full (default: warn)")
 
     # --- andr task ---
     p_task = sub.add_parser("task", help="Send a task to the running agent")

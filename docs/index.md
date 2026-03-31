@@ -46,4 +46,5 @@ The agent discovers it immediately. Ask "turn on the lights" and it calls your t
 - [Installation](getting-started/installation.md) — pip, Docker, or from source
 - [Your First Project](getting-started/first-project.md) — scaffold and run a project in 2 minutes
 - [Custom Tools](guides/tools.md) — full guide to building tools
+- [Memory](guides/memory.md) — persistent RAG memory across sessions
 - [Architecture](reference/architecture.md) — how the pieces fit together
