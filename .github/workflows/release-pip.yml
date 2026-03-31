@@ -5,9 +5,9 @@
 #
 # Flow:
 #   1. Spin up ROS 2 Humble container
-#   2. Build andr_msgs with colcon (generates .so + Python bindings)
-#   3. Sync bindings + base classes into pip package
-#   4. Build wheel
+#   2. Build andr_msgs + tool_manager with colcon
+#   3. Sync compiled artifacts (bindings, .so libs, binary) into pip package
+#   4. Build wheel (setuptools follows symlinks for Python source files)
 #   5. Publish to PyPI
 
 name: Release pip package
@@ -34,22 +34,24 @@ jobs:
           apt-get install -y python3-pip python3-colcon-common-extensions
           pip3 install build twine
 
-      - name: Build andr_msgs
+      - name: Build andr_msgs + tool_manager
         run: |
           source /opt/ros/humble/setup.bash
-          colcon build --packages-select andr_msgs
+          colcon build --packages-select andr_msgs tool_manager
         shell: bash
 
-      - name: Sync bindings into pip package
+      - name: Sync compiled artifacts into pip package
         run: |
           PY_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
           MSGS_SRC="install/andr_msgs/local/lib/python${PY_VERSION}/dist-packages/andr_msgs"
           LIBS_SRC="install/andr_msgs/lib"
+          TM_BIN="install/tool_manager/lib/tool_manager/tool_manager_node"
 
           # Sync andr_msgs Python bindings
           rm -rf pip/andr/andr/_msgs_bind/andr_msgs
           mkdir -p pip/andr/andr/_msgs_bind/andr_msgs
           cp -r ${MSGS_SRC}/* pip/andr/andr/_msgs_bind/andr_msgs/
+          touch pip/andr/andr/_msgs_bind/__init__.py
 
           # Sync shared libraries
           rm -f pip/andr/andr/_libs/*.so
@@ -57,9 +59,10 @@ jobs:
           cp ${LIBS_SRC}/libandr_msgs*.so pip/andr/andr/_libs/
           touch pip/andr/andr/_libs/__init__.py
 
-          # Sync base classes
-          cp andr_core/andr_tools/andr_tools/base_agent_tool.py pip/andr/andr/tools/
-          cp andr_core/andr_tools/andr_tools/base_input_source.py pip/andr/andr/tools/
+          # Sync tool_manager binary
+          mkdir -p pip/andr/andr/bin
+          cp ${TM_BIN} pip/andr/andr/bin/tool_manager_node
+          chmod +x pip/andr/andr/bin/tool_manager_node
         shell: bash
 
       - name: Set version from tag

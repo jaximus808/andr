@@ -20,17 +20,10 @@ dist/
 # Misc
 random/
 
-# ── pip package build artifacts (synced by scripts/build_pip.sh) ──
-# These are copied/generated at build time — the source of truth
-# lives in andr_core/, andr_ui/, and install/ respectively.
+# ── pip package build artifacts (compiled, synced by scripts/build_pip.sh) ──
 pip/andr/andr/_libs/*.so
 pip/andr/andr/_msgs_bind/andr_msgs/
 pip/andr/andr/bin/tool_manager_node
-pip/andr/andr/runtime/agent/
-pip/andr/andr/runtime/task_manager/
-pip/andr/andr/runtime/andr_ui/
-pip/andr/andr/tools/base_agent_tool.py
-pip/andr/andr/tools/base_input_source.py
 pip/andr/build/
 pip/andr/dist/
 pip/andr/*.egg-info/
