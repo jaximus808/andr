@@ -93,8 +93,14 @@ class BaseInputSource(Node):
         """True if a task sent by this source is currently being executed."""
         return self._busy
 
-    def send_task(self, prompt: str, context: str = "") -> bool:
+    def send_task(self, prompt: str, context: str = "", priority: int = 5) -> bool:
         """Send a task through the task_manager pipeline.
+
+        Args:
+            prompt: Natural-language task description.
+            context: Optional runtime context string.
+            priority: Task priority (1–10, higher = more important, default 5).
+                      Tasks with higher priority preempt lower-priority ones.
 
         Returns True if the task was dispatched, False if task_manager
         is unavailable.
@@ -112,6 +118,7 @@ class BaseInputSource(Node):
         goal = TaskGoal.Goal()
         goal.prompt = prompt
         goal.context = context
+        goal.priority = max(1, min(10, priority))
 
         self._busy = True
         self.get_logger().info(

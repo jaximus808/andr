@@ -5,17 +5,21 @@ The TaskBrain sits above task_manager and controls what the agent works on.
 It maintains a priority queue and can preempt lower-priority running tasks
 to service higher-priority ones.
 
-Priority levels (higher number = higher priority):
-    1  IDLE    — wander / idle behavior ("do something interesting")
-    2  SCHED   — scheduled / cron tasks
-    3  USER    — user-initiated tasks (UI, input sources, CLI)
-    4  URGENT  — interrupt-level tasks (safety, critical alerts)
+Priority scale (1–10, higher = more important):
+    1      — lowest (wander / idle behavior)
+    2      — scheduled / cron tasks
+    5      — default (user-initiated tasks from UI, input sources, CLI)
+    8–10   — urgent / interrupt-level tasks (safety, critical alerts)
 
 When a higher-priority task arrives while a lower-priority task is running:
     1. Cancel the running task
-    2. Ask the agent to summarize its progress (state save)
-    3. Execute the new task
-    4. After completion, optionally resume the preempted task with saved context
+    2. Save the agent's latest feedback as state
+    3. Push the preempted task onto a resume stack
+    4. Execute the new task
+    5. After completion, resume the preempted task with saved context
+
+If the new task has priority <= the current task, it is queued and will
+execute after the current task completes.
 
 Wander mode (optional):
     When enabled and no other tasks are pending, the brain sends idle prompts
@@ -30,7 +34,6 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from enum import IntEnum
 from typing import Optional
 
 import rclpy
@@ -44,13 +47,11 @@ from andr_msgs.action import TaskGoal
 logger = logging.getLogger(__name__)
 
 
-# ── Priority levels ──────────────────────────────────────────────────────────
+# ── Priority constants (1–10 scale, higher = more important) ─────────────────
 
-class Priority(IntEnum):
-    IDLE = 1
-    SCHEDULED = 2
-    USER = 3
-    URGENT = 4
+DEFAULT_PRIORITY = 5       # Default for user-initiated tasks
+IDLE_PRIORITY = 1          # Wander / idle behavior
+SCHEDULED_PRIORITY = 2     # Cron-like recurring tasks
 
 
 # ── Task representation ─────────────────────────────────────────────────────
@@ -62,12 +63,12 @@ class Task:
     id: str = field(compare=False, default_factory=lambda: uuid.uuid4().hex[:8])
     prompt: str = field(compare=False, default="")
     context: str = field(compare=False, default="")
-    priority: int = field(compare=False, default=Priority.USER)
+    priority: int = field(compare=False, default=DEFAULT_PRIORITY)
     saved_state: str = field(compare=False, default="")
     is_resume: bool = field(compare=False, default=False)
 
     @staticmethod
-    def create(prompt: str, context: str = "", priority: int = Priority.USER,
+    def create(prompt: str, context: str = "", priority: int = DEFAULT_PRIORITY,
                saved_state: str = "", is_resume: bool = False) -> Task:
         # Negate priority so higher priority = lower sort key (popped first)
         # Use time as tiebreaker (earlier = first)
@@ -87,7 +88,7 @@ class ScheduledTask:
     prompt: str
     context: str
     interval_sec: float
-    priority: int = Priority.SCHEDULED
+    priority: int = SCHEDULED_PRIORITY
     enabled: bool = True
     last_run: float = 0.0
 
@@ -183,19 +184,20 @@ class TaskBrain(Node):
     # ══════════════════════════════════════════════════════════════════════
 
     def submit_task(self, prompt: str, context: str = "",
-                    priority: int = Priority.USER) -> str:
+                    priority: int = DEFAULT_PRIORITY) -> str:
         """Add a task to the queue. Returns the task ID."""
+        priority = max(1, min(10, priority))  # clamp to 1–10
         task = Task.create(prompt, context, priority)
         with self._lock:
             heapq.heappush(self._queue, task)
         self.get_logger().info(
-            f"Task queued: [{Priority(priority).name}] id={task.id} "
+            f"Task queued: [priority={priority}] id={task.id} "
             f"prompt='{prompt[:60]}'"
         )
         return task.id
 
     def add_scheduled_task(self, name: str, prompt: str, interval_sec: float,
-                           context: str = "", priority: int = Priority.SCHEDULED) -> None:
+                           context: str = "", priority: int = SCHEDULED_PRIORITY) -> None:
         """Register a recurring scheduled task."""
         self._scheduled_tasks[name] = ScheduledTask(
             name=name, prompt=prompt, context=context,
@@ -228,12 +230,11 @@ class TaskBrain(Node):
     def _submit_execute_cb(self, goal_handle) -> TaskGoal.Result:
         """Handle an externally submitted task.
 
-        Determines priority from context field (if it contains
-        'priority:urgent', 'priority:scheduled', etc.) and queues it.
-        Then waits for it to complete before returning the result.
+        Reads priority from the goal's priority field (1–10, default 5).
+        Queues the task and waits for it to complete before returning.
         """
         goal = goal_handle.request
-        priority = self._parse_priority(goal.context)
+        priority = goal.priority if goal.priority > 0 else DEFAULT_PRIORITY
 
         task = Task.create(goal.prompt, goal.context, priority)
         done_event = threading.Event()
@@ -247,7 +248,7 @@ class TaskBrain(Node):
             heapq.heappush(self._queue, task)
 
         self.get_logger().info(
-            f"External task queued: [{Priority(priority).name}] "
+            f"External task queued: [priority={priority}] "
             f"id={task.id} prompt='{goal.prompt[:60]}'"
         )
 
@@ -284,9 +285,9 @@ class TaskBrain(Node):
 
                     if next_prio > curr_prio:
                         self.get_logger().info(
-                            f"Preempting [{Priority(curr_prio).name}] task "
+                            f"Preempting [priority={curr_prio}] task "
                             f"'{self._current_task.prompt[:40]}' for "
-                            f"[{Priority(next_prio).name}] task "
+                            f"[priority={next_prio}] task "
                             f"'{next_task.prompt[:40]}'"
                         )
                         self._preempt_current()
@@ -324,7 +325,7 @@ class TaskBrain(Node):
 
         # Save state: the task gets queued for resume with whatever context
         # the agent already produced (feedback state)
-        if self._resume_preempted and task.priority > Priority.IDLE:
+        if self._resume_preempted and task.priority > IDLE_PRIORITY:
             task.saved_state = (
                 f"This task was interrupted before completion. "
                 f"Original prompt: {task.prompt}"
@@ -360,12 +361,13 @@ class TaskBrain(Node):
             goal.prompt = task.prompt
 
         goal.context = task.context
+        goal.priority = task.priority
 
         self._running = True
         self._current_task = task
 
         self.get_logger().info(
-            f"Dispatching [{Priority(task.priority).name}] task id={task.id}: "
+            f"Dispatching [priority={task.priority}] task id={task.id}: "
             f"'{task.prompt[:60]}'"
         )
 
@@ -482,23 +484,11 @@ class TaskBrain(Node):
             self._wander_index += 1
 
         self.get_logger().info(f"Wander: '{prompt[:60]}'")
-        return Task.create(prompt, context="wander", priority=Priority.IDLE)
+        return Task.create(prompt, context="wander", priority=IDLE_PRIORITY)
 
     # ══════════════════════════════════════════════════════════════════════
     # Helpers
     # ══════════════════════════════════════════════════════════════════════
-
-    @staticmethod
-    def _parse_priority(context: str) -> int:
-        """Extract priority from context string if present."""
-        ctx_lower = context.lower()
-        if "priority:urgent" in ctx_lower:
-            return Priority.URGENT
-        if "priority:scheduled" in ctx_lower:
-            return Priority.SCHEDULED
-        if "priority:idle" in ctx_lower:
-            return Priority.IDLE
-        return Priority.USER
 
     def _send_submit_feedback(self, goal_handle, state, status, progress) -> None:
         fb = TaskGoal.Feedback()

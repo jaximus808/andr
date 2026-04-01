@@ -512,9 +512,10 @@ def _build_app(node: WebUIInput):
                 if msg_type == "prompt":
                     text = str(msg.get("text", "")).strip()
                     context = str(msg.get("context", ""))
+                    priority = int(msg.get("priority", 5))
                     if text:
                         # send_task is inherited from BaseInputSource
-                        node.send_task(text, context)
+                        node.send_task(text, context, priority=priority)
                         payload = json.dumps({"type": "user_prompt", "text": text})
                         for c in list(clients):
                             try:

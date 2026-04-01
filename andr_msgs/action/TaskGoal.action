@@ -1,6 +1,7 @@
 # GOAL — sent by the UI (via task_manager) to kick off a task
 string prompt          # Natural-language task description
 string context         # Optional runtime context (robot state, etc.)
+int32  priority  5     # Task priority (1–10, higher = more important, default 5)
 ---
 # RESULT — returned when the agent finishes
 bool   success         # True = task completed, False = failed/cancelled
