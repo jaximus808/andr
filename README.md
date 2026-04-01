@@ -223,6 +223,29 @@ andr status                               # Check what nodes are running
 
 ---
 
+## How ANDR Compares
+
+Most existing projects in the ROS 2 + LLM space solve a piece of the problem. ANDR is the only one that provides a complete, reusable pipeline from input to execution.
+
+| Project | What it does | What it lacks vs. ANDR |
+|---|---|---|
+| **ROSA** (NASA JPL) | LangChain agent for ROS introspection/debugging | No task pipeline, no tool registry, no input abstraction — built for diagnosis, not autonomous control |
+| **ROS-LLM** (Auromix) | LLM generates code/behavior trees to control robots | No tool registry or input source abstraction — the LLM writes raw code rather than calling discovered tools |
+| **bob_llm** | Single ROS 2 node with dynamic Python tool loading | Closest to ANDR's tool pattern, but just one node — no pipeline, no scheduling, no input abstraction |
+| **ROSClaw** | MCP-native framework, auto-generates schemas from ROS interfaces | Ambitious architecture with safety validation, but very early stage — many TODOs, limited tests |
+| **CaP-X** (NVIDIA/Berkeley) | Benchmark for code-generation robot agents in simulation | Research evaluation suite, not a reusable framework |
+
+**What makes ANDR different:**
+
+- **Full pipeline** — input sources → task_brain → task_manager → agent → tool_manager → tools. No other project structures the entire flow.
+- **Both sides abstracted** — `BaseAgentTool` for output, `BaseInputSource` for input. Write a Python class, get a registered capability or input source.
+- **Agent is truly tool-agnostic** — tools are discovered at runtime via the registry. Adding a capability never touches agent code.
+- **Single entry point** — every task flows through `task_manager` regardless of origin (UI, vision, Slack, cron), ensuring consistent scheduling and priority handling.
+
+General-purpose agent frameworks (LangChain, CrewAI) have good tool-calling abstractions but zero robotics awareness. Robotics frameworks (ROS 2, Nav2, MoveIt) have great robot control but no LLM integration pattern. ANDR bridges the gap.
+
+---
+
 ## Architecture
 
 ```
