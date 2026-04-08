@@ -1,0 +1,50 @@
+slam_toolbox:
+  ros__parameters:
+    # General
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+    scan_topic: /scan
+    use_sim_time: true
+    mode: localization
+
+    # map_file_name is set via launch argument (without extension)
+
+    # Start at the pose where mapping originally began
+    map_start_at_dock: true
+
+    # Processing
+    resolution: 0.05
+    max_laser_range: 12.0
+    minimum_time_interval: 0.5
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+
+    # Scan matching
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.5
+    minimum_travel_heading: 0.5
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+
+    # Correlation
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    # Loop closure
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # Fine search
+    fine_search_space_dimension: 0.5
+    fine_search_space_resolution: 0.01
+    fine_search_space_smear_deviation: 0.001

@@ -43,6 +43,42 @@ def _check_ros():
         sys.exit(1)
 
 
+# ROS packages required for `andr start --sim`. Mapped to the apt package
+# that provides them so we can print an actionable install command.
+_SIM_DEPS = {
+    "gazebo_ros":           "ros-humble-gazebo-ros-pkgs",
+    "nav2_bringup":         "ros-humble-nav2-bringup",
+    "slam_toolbox":         "ros-humble-slam-toolbox",
+    "xacro":                "ros-humble-xacro",
+    "robot_state_publisher": "ros-humble-robot-state-publisher",
+    "rviz2":                "ros-humble-rviz2",
+}
+
+
+def _check_sim_deps():
+    """Verify the apt-installed ROS packages required for --sim are present.
+
+    Mirrors `_check_ros()`: detect, instruct, exit. Never auto-installs.
+    """
+    missing_pkgs = []
+    missing_apt = []
+    for ros_pkg, apt_pkg in _SIM_DEPS.items():
+        if not _ros2_pkg_exists(ros_pkg):
+            missing_pkgs.append(ros_pkg)
+            missing_apt.append(apt_pkg)
+
+    if missing_pkgs:
+        print("Error: 'andr start --sim' requires additional ROS packages.")
+        print()
+        print("Missing:")
+        for p in missing_pkgs:
+            print(f"  - {p}")
+        print()
+        print("Install with:")
+        print("  sudo apt install " + " ".join(missing_apt))
+        sys.exit(1)
+
+
 # ── Node runner functions (each runs in its own process) ────────────────
 
 def _run_prompt_manager():
@@ -266,6 +302,32 @@ def cmd_start(args):
     print(f"  Model:    {args.model or '(default)'}")
     print(f"  Host:     {args.host}")
     print()
+
+    # 0. Sim (Gazebo + nav2 + SLAM via the bundled launch file)
+    if args.sim:
+        _check_sim_deps()
+        from andr import world_resolver
+        from andr.runtime.andr_sim import LAUNCH_FILE as SIM_LAUNCH_FILE
+
+        try:
+            world_path = world_resolver.resolve_world(args.world)
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
+        world_resolver.write_sim_config(world_path)
+        world_name = os.path.basename(world_path)
+        print(f"  [ok]   Starting sim — world: {world_name}")
+
+        sim_args = [
+            "ros2", "launch", SIM_LAUNCH_FILE,
+            f"world:={world_path}",
+            f"launch_rviz:={'false' if args.no_rviz else 'true'}",
+        ]
+        processes.append(subprocess.Popen(sim_args))
+        # Give Gazebo a head start before the agent stack comes up so the
+        # robot is spawned and TF/clock are flowing by the time tools register.
+        time.sleep(3)
 
     # 1. Tool manager (C++ binary — needs colcon or prebuilt)
     tm = _find_tool_manager()
@@ -812,6 +874,13 @@ def main():
     p_start.add_argument("--enable-wander", action="store_true", help="Enable wander mode (idle prompts when no tasks)")
     p_start.add_argument("--wander-interval", type=float, default=60.0, help="Seconds between wander prompts (default: 60)")
     p_start.add_argument("--no-resume", action="store_true", help="Don't resume preempted tasks")
+    p_start.add_argument("--sim", action="store_true",
+                         help="Launch the bundled Gazebo simulator alongside the agent stack")
+    p_start.add_argument("--world", default="",
+                         help="World file for --sim (absolute path, relative path, or "
+                              "bare name resolved against ~/andr_worlds/)")
+    p_start.add_argument("--no-rviz", action="store_true",
+                         help="Don't launch RViz when --sim is set")
 
     # --- andr task ---
     p_task = sub.add_parser("task", help="Send a task to the running agent")

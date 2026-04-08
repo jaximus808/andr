@@ -1,2 +1,3 @@
 recursive-include andr/_libs *.so
 recursive-include andr/_msgs_bind *.so *.py *.c
+recursive-include andr/runtime/andr_sim *.launch.py *.xacro *.yaml *.rviz *.world
