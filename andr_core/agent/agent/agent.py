@@ -139,8 +139,25 @@ class AgentServer(Node):
     def _setup_memory(self) -> None:
         backend = self._str("memory_backend")
         self._memory_top_k = self.get_parameter("memory_top_k").get_parameter_value().integer_value
-        self._memory: MemoryStore = create_memory(backend)
-        self.get_logger().info(f"Memory: backend='{backend}' top_k={self._memory_top_k}")
+
+        # Try service-based memory first (standalone memory node)
+        try:
+            self._memory: MemoryStore = create_memory(
+                backend=backend, ros_node=self, use_service=True, timeout_sec=5.0,
+            )
+            self.get_logger().info(
+                f"Memory: connected to memory node via services (top_k={self._memory_top_k})"
+            )
+        except RuntimeError:
+            # No memory node running — fall back to direct in-process backend
+            self.get_logger().warn(
+                "Memory node not available — falling back to direct in-process "
+                f"'{backend}' backend. Run a memory node for full modularity."
+            )
+            self._memory = create_memory(backend=backend, use_service=False)
+            self.get_logger().info(
+                f"Memory: backend='{backend}' (direct) top_k={self._memory_top_k}"
+            )
 
     def _setup_skills(self) -> None:
         print("Discovering skills from tool_manager…")

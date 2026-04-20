@@ -35,6 +35,7 @@ setup(
         'console_scripts': [
             'agent_server = agent.agent:main',
             'prompt_manager = agent.prompt_manager:main',
+            'memory_chroma_node = agent.memory_chroma_node:main',
         ],
     },
 )

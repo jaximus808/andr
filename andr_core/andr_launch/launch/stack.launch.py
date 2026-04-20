@@ -114,6 +114,23 @@ def _build_nodes(context, *args, **kwargs) -> list:
         ))
         summary_lines.append("  [core] prompt_manager\n")
 
+    # ── Core: memory node ─────────────────────────────────────────────────
+    mem_cfg = core.get("memory", {})
+    if mem_cfg.get("enabled", False):
+        mem_pkg = mem_cfg.get("package", "agent")
+        mem_exe = mem_cfg.get("executable", "memory_chroma_node")
+        mem_params = mem_cfg.get("params", {})
+        nodes.append(Node(
+            package=mem_pkg,
+            executable=mem_exe,
+            name=mem_exe,
+            output="screen",
+            emulate_tty=True,
+            arguments=ros_args,
+            parameters=[mem_params] if mem_params else [],
+        ))
+        summary_lines.append(f"  [core] memory         ({mem_exe})\n")
+
     # ── Core: agent ──────────────────────────────────────────────────────
     agent_cfg = core.get("agent", {})
     if agent_cfg.get("enabled", False):

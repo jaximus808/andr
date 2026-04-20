@@ -24,6 +24,7 @@ launch_brain        bool    true        Start the andr_brain C++ node.
 enable_wander       bool    true        Enable the behavior tree / wander loop inside the brain.
 launch_agent        bool    true        Start the agent_server Python node.
 launch_task_mgr     bool    true        Start the task_manager_server Python node.
+launch_memory       bool    true        Start the memory node (ChromaDB by default).
 launch_ui           bool    true        Start the andr_ui web dashboard.
 ui_port             string  8080        Port for the andr_ui web server.
 log_level           string  info        ROS log level (debug/info/warn/error).
@@ -90,7 +91,9 @@ def generate_launch_description() -> LaunchDescription:
                               description="Start the agent_server Python node"),
         DeclareLaunchArgument("launch_task_mgr", default_value="true",
                               description="Start the task_manager_server node"),
-DeclareLaunchArgument("launch_ui",    default_value="true",
+        DeclareLaunchArgument("launch_memory", default_value="true",
+                              description="Start the memory node (ChromaDB by default)"),
+        DeclareLaunchArgument("launch_ui",    default_value="true",
                               description="Start the andr_ui web dashboard"),
         DeclareLaunchArgument("ui_port",      default_value="8080",
                               description="Port for the andr_ui web server"),
@@ -138,6 +141,17 @@ DeclareLaunchArgument("launch_ui",    default_value="true",
         condition=IfCondition(LaunchConfiguration("launch_agent")),
     )
 
+    memory_node = Node(
+        package="agent",
+        executable="memory_chroma_node",
+        name="memory_chroma",
+        output="screen",
+        emulate_tty=True,
+        arguments=["--ros-args", "--log-level",
+                   LaunchConfiguration("log_level")],
+        condition=IfCondition(LaunchConfiguration("launch_memory")),
+    )
+
     agent_node_action = OpaqueFunction(
         function=_agent_node,
         condition=IfCondition(LaunchConfiguration("launch_agent")),
@@ -180,5 +194,5 @@ DeclareLaunchArgument("launch_ui",    default_value="true",
 
     return LaunchDescription([
         *args, startup_msg,
-        brain_node, prompt_manager_node, agent_node_action, task_manager_node, ui_process,
+        brain_node, memory_node, prompt_manager_node, agent_node_action, task_manager_node, ui_process,
     ])

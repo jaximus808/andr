@@ -108,6 +108,35 @@ class QueryKnowledgeBaseTool(BaseTool):
 
 
 # ---------------------------------------------------------------------------
+# Save-to-memory tool — lets the agent decide what to remember
+# ---------------------------------------------------------------------------
+
+class SaveToMemoryTool(BaseTool):
+    """LangChain tool that stores information in the robot's memory."""
+
+    name: str = "save_to_memory"
+    description: str = (
+        "Save important information to long-term memory for future recall. "
+        "Use this to remember facts, user preferences, observations, "
+        "task outcomes, or anything worth retaining. Be specific and "
+        "descriptive — the text you save is what you will retrieve later."
+    )
+
+    memory: Any = None   # MemoryStore
+    model_config = {"arbitrary_types_allowed": True}
+
+    def __init__(self, memory: MemoryStore, **kwargs: Any):
+        super().__init__(memory=memory, **kwargs)
+
+    def _run(self, text: str, source: str = "agent") -> str:
+        try:
+            self.memory.add(text, metadata={"source": source})
+            return f"Saved to memory: '{text[:80]}{'…' if len(text) > 80 else ''}'"
+        except Exception as exc:
+            return f"Failed to save to memory: {exc}"
+
+
+# ---------------------------------------------------------------------------
 # Factory: registry → list of LangChain tools
 # ---------------------------------------------------------------------------
 
@@ -129,5 +158,9 @@ def create_tools_from_registry(
         rag_tool = QueryKnowledgeBaseTool(memory=memory, top_k=memory_top_k)
         logger.info("Created LangChain tool: 'query_knowledge_base'")
         tools.append(rag_tool)
+
+        save_tool = SaveToMemoryTool(memory=memory)
+        logger.info("Created LangChain tool: 'save_to_memory'")
+        tools.append(save_tool)
 
     return tools
